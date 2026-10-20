@@ -1,135 +1,147 @@
-import React, { useState } from 'react';
-import { Pill } from '../common/Pill';
-
-interface AgentCardData {
-  id: string;
-  name: string;
-  status: { label: string; variant: 'run' | 'ok' | 'warn' | 'bad' };
-  description: string;
-  stats: string[];
-}
-
-const AGENTS: AgentCardData[] = [
-  {
-    id: 'reachability-analyzer',
-    name: 'reachability-analyzer',
-    status: { label: 'Running', variant: 'run' },
-    description: 'Tracing execution paths in api-gateway · F-2847 · confirming whether vulnerable functions are invoked with attacker-controlled input.',
-    stats: ['14 EVIDENCE ARTIFACTS', 'UPTIME 6h 12m', '62% COMPLETE']
-  },
-  {
-    id: 'cve-correlator',
-    name: 'cve-correlator',
-    status: { label: 'Completed', variant: 'ok' },
-    description: 'Cross-referenced 312 packages against OSV, GHSA and NVD advisories · 47 matches confirmed with exploit conditions.',
-    stats: ['312 PACKAGES', '47 MATCHES']
-  },
-  {
-    id: 'patch-synthesizer',
-    name: 'patch-synthesizer',
-    status: { label: 'Awaiting Input', variant: 'warn' },
-    description: 'Draft patch for F-2847 ready · includes dependency upgrade to serialize-javascript@6.0.2 and code-level deserialization guard.',
-    stats: ['1 PATCH DRAFT', 'REVIEW REQUIRED']
-  },
-  {
-    id: 'test-runner',
-    name: 'test-runner',
-    status: { label: 'Running', variant: 'run' },
-    description: 'Executing security regression suite against proposed patch · inconclusive results are surfaced, never suppressed.',
-    stats: ['41 / 56 CHECKS', '0 FAILURES']
-  }
-];
-
-const INITIAL_LOGS = [
-  { time: '14:32:07', agent: 'reachability-analyzer', text: 'reachability-analyzer · trace complete · F-2847 · 14 evidence artifacts attached' },
-  { time: '14:31:52', agent: 'test-runner', text: 'test-runner · security suite executing · 41/56 checks passed' },
-  { time: '14:28:11', agent: 'cve-correlator', text: 'cve-correlator · matched GHSA-35jh-r3h4-6jhm · lodash@4.17.15' },
-  { time: '14:22:40', agent: 'patch-synthesizer', text: 'patch-synthesizer · draft patch ready · awaiting reviewer approval' },
-];
+import React from 'react';
+import { Shield, GitCommit, Network, Cpu } from 'lucide-react';
 
 export const AgentsView: React.FC = () => {
-  const [showLogsModal, setShowLogsModal] = useState(false);
-  const [logs] = useState(INITIAL_LOGS);
-
   return (
-    <div className="view-body">
-      <div className="view-heading">
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="border-b border-vt-border pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h2>Agents</h2>
-          <span className="view-sub">4 autonomous agents · evidence &amp; execution details</span>
-        </div>
-        <div className="vt-actions">
-          <button 
-            className="btn-secondary mono"
-            onClick={() => setShowLogsModal(true)}
-          >
-            AGENT LOGS
-          </button>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-vt-navy font-mono">Architecture &amp; Roles</span>
+            <span className="text-vt-muted">✱</span>
+            <span className="badge-ai">Groq API (openai/gpt-oss-120b)</span>
+          </div>
+          <h1 className="text-3xl font-heading font-bold text-vt-deep-navy">
+            Multi-Agent Architecture
+          </h1>
+          <p className="text-sm text-vt-muted mt-1 max-w-xl">
+            Three cooperating agents with strict JSON-schema enforcement, coordinated by non-LLM orchestration code (LangGraph).
+          </p>
         </div>
       </div>
 
-      {/* Agents 2x2 Grid */}
-      <div className="vt-grid grid-cols-1 md:grid-cols-2">
-        {AGENTS.map((agent) => (
-          <div key={agent.id} className="vt-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="vt-card-label font-mono">{agent.name}</div>
-              <Pill variant={agent.status.variant}>
-                {agent.status.label}
-              </Pill>
+      {/* Non-LLM Coordinator Card */}
+      <div className="vt-card border-vt-navy bg-vt-tint/20 space-y-4">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-vt-navy text-white rounded-lg">
+              <Network size={20} />
             </div>
-            <div className="vt-note">
-              {agent.description}
-            </div>
-            <div className="agent-meta">
-              {agent.stats.map((s, idx) => (
-                <span key={idx} className="agent-stat">{s}</span>
-              ))}
+            <div>
+              <span className="mono text-[10px] text-vt-navy font-bold uppercase">Non-LLM Orchestration</span>
+              <h2 className="font-heading font-bold text-xl text-vt-deep-navy">
+                Workflow Coordinator (LangGraph)
+              </h2>
             </div>
           </div>
-        ))}
-      </div>
-
-      {/* Live Execution Log */}
-      <div className="vt-card mt-4">
-        <div className="flex justify-between items-center mb-2">
-          <div className="vt-card-label">Execution Log</div>
-          <span className="mono text-[9px] text-[#55555E]">LIVE FEED · 4 ENTRIES</span>
+          <span className="badge-evidence">Deterministic Python</span>
         </div>
-        <div className="mt-2 divide-y divide-[#141419]">
-          {logs.map((log, idx) => (
-            <div key={idx} className="log-line">
-              <span className="log-time font-mono">{log.time}</span>
-              <span className="font-mono text-[#B9B9C4]">{log.text}</span>
-            </div>
-          ))}
+
+        <p className="text-sm text-vt-ink leading-relaxed">
+          The coordinator is <strong>ordinary orchestration code (not an LLM agent)</strong> that executes the stateful pipeline, passes evidence bundles between agents, validates all output references, and routes uncertain findings directly to human review.
+        </p>
+
+        <div className="bg-white p-3 rounded-lg border border-vt-border font-mono text-xs text-vt-muted">
+          Stateful Pipeline: ingest → osv_lookup → code_analysis → graph_build → path_query → reachability_agent → prioritizer_agent → remediation_agent → validation → human_review
         </div>
       </div>
 
-      {/* Logs Modal */}
-      {showLogsModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0E0E12] border border-[#26262E] w-full max-w-2xl rounded-lg p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="font-heading text-lg font-semibold text-white">Autonomous Agent Runtime Logs</h3>
-                <span className="mono text-[10px] text-[#55555E]">STREAMING STDOUT/STDERR SESSIONS</span>
-              </div>
-              <button onClick={() => setShowLogsModal(false)} className="text-gray-500 hover:text-white">✕</button>
+      {/* Three Cooperating Agents Grid (PRD §8) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Agent 1: Reachability Analyst */}
+        <div className="vt-card flex flex-col justify-between space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="mono text-[10px] text-vt-navy font-bold uppercase">Agent 1</span>
+              <span className="badge-ai text-[10px]">Candidate: gpt-oss-120b</span>
             </div>
-            <div className="bg-[#050508] border border-[#1C1C22] p-4 rounded font-mono text-xs text-[#8B8B96] max-h-96 overflow-y-auto space-y-2">
-              <div>[14:32:07.112] <span className="text-[#5C7CFA]">INFO</span> reachability-analyzer: AST parse tree generated for 214 modules</div>
-              <div>[14:32:07.450] <span className="text-[#00FF41]">SUCCESS</span> reachability-analyzer: 14 evidence artifacts persisted to sqlite memory</div>
-              <div>[14:31:52.001] <span className="text-[#5C7CFA]">INFO</span> test-runner: pytest --security-regression suite in container sandbox</div>
-              <div>[14:28:11.890] <span className="text-[#FF9F43]">WARN</span> cve-correlator: CVE-2021-23337 flagged with public exploit in exploit-db</div>
-              <div>[14:22:40.120] <span className="text-[#FECA57]">NOTICE</span> patch-synthesizer: generated AST transform patch diff /api-gateway/src/utils/serialize.ts</div>
+            <div className="flex items-center gap-2">
+              <Shield className="text-vt-navy" size={18} />
+              <h3 className="font-heading font-bold text-lg text-vt-deep-navy">
+                Reachability Analyst
+              </h3>
             </div>
-            <div className="mt-6 flex justify-end">
-              <button onClick={() => setShowLogsModal(false)} className="btn-primary mono">CLOSE</button>
+            <p className="text-xs text-vt-ink leading-relaxed">
+              Assesses whether vulnerable functionality appears reachable from application entry points based solely on deterministic Tree-sitter evidence.
+            </p>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-vt-border text-xs">
+            <div className="bg-gray-50 p-2.5 rounded border border-gray-200">
+              <strong className="text-vt-deep-navy font-mono text-[11px] block mb-1">Strict Guardrail:</strong>
+              <span className="text-vt-muted text-[11px]">
+                May only cite verified graph node IDs. Coordinator validates every ref and rejects outputs with hallucinated references.
+              </span>
+            </div>
+            <div className="mono text-[10px] text-vt-navy font-semibold">
+              Output: verdict (reachable | not_reachable | uncertain), evidence_refs, caveats
             </div>
           </div>
         </div>
-      )}
+
+        {/* Agent 2: Risk Prioritizer */}
+        <div className="vt-card flex flex-col justify-between space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="mono text-[10px] text-vt-navy font-bold uppercase">Agent 2</span>
+              <span className="badge-ai text-[10px]">Candidate: gpt-oss-120b</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Cpu className="text-vt-navy" size={18} />
+              <h3 className="font-heading font-bold text-lg text-vt-deep-navy">
+                Risk Prioritizer
+              </h3>
+            </div>
+            <p className="text-xs text-vt-ink leading-relaxed">
+              Explains why a finding should be addressed sooner or later based on entry-point exposure context (HTTP/public vs. internal).
+            </p>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-vt-border text-xs">
+            <div className="bg-gray-50 p-2.5 rounded border border-gray-200">
+              <strong className="text-vt-deep-navy font-mono text-[11px] block mb-1">Categorical Bands:</strong>
+              <span className="text-vt-muted text-[11px]">
+                No invented numeric score formulas. Maps strictly to Fix now, Schedule fix, Monitor, or Human review.
+              </span>
+            </div>
+            <div className="mono text-[10px] text-vt-navy font-semibold">
+              Output: priority_band, plain-language rationale
+            </div>
+          </div>
+        </div>
+
+        {/* Agent 3: Remediation Agent */}
+        <div className="vt-card flex flex-col justify-between space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="mono text-[10px] text-vt-navy font-bold uppercase">Agent 3</span>
+              <span className="badge-ai text-[10px]">Candidate: gpt-oss-120b</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <GitCommit className="text-vt-navy" size={18} />
+              <h3 className="font-heading font-bold text-lg text-vt-deep-navy">
+                Remediation Agent
+              </h3>
+            </div>
+            <p className="text-xs text-vt-ink leading-relaxed">
+              Suggests minimal dependency version bumps as unified diffs and hands off to controlled sandboxed validation.
+            </p>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-vt-border text-xs">
+            <div className="bg-gray-50 p-2.5 rounded border border-gray-200">
+              <strong className="text-vt-deep-navy font-mono text-[11px] block mb-1">Validation Constraint:</strong>
+              <span className="text-vt-muted text-[11px]">
+                Never claims a fix succeeded until sandbox execution verifies it. Status stays proposed until tests pass.
+              </span>
+            </div>
+            <div className="mono text-[10px] text-vt-navy font-semibold">
+              Output: unified diff, status (proposed | unverified)
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

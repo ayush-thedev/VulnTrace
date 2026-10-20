@@ -1,206 +1,199 @@
 import React, { useState, useEffect } from 'react';
-import { Pill } from '../common/Pill';
-import { ScanItem } from '../../types';
-
-const INITIAL_SCANS: ScanItem[] = [
-  { id: 'SCAN-2290', repository: 'api-gateway', type: 'FULL', findings: 12, status: { label: 'Completed', variant: 'ok' }, duration: '14m 32s' },
-  { id: 'SCAN-2289', repository: 'checkout-service', type: 'INCREMENTAL', findings: 3, status: { label: 'Completed', variant: 'ok' }, duration: '6m 04s' },
-  { id: 'SCAN-2288', repository: 'legacy-auth', type: 'FULL', findings: '—', status: { label: 'Failed · Retry', variant: 'bad' }, duration: '2m 11s' },
-  { id: 'SCAN-2287', repository: 'billing-worker', type: 'FULL', findings: '—', status: { label: 'Cancelled', variant: 'mut' }, duration: '—' },
-  { id: 'SCAN-2286', repository: 'api-gateway', type: 'DIFF', findings: 0, status: { label: 'Completed', variant: 'ok' }, duration: '4m 47s' },
-];
+import { ScanResponse } from '../../types/api';
+import { api } from '../../services/api';
+import { Play, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 
 export const ScansView: React.FC = () => {
-  const [progress, setProgress] = useState(68);
-  const [showConfigModal, setShowConfigModal] = useState(false);
-  const [showNewScanModal, setShowNewScanModal] = useState(false);
-  const [scans, setScans] = useState<ScanItem[]>(INITIAL_SCANS);
-  const [scanType, setScanType] = useState('FULL');
-  const [selectedRepo, setSelectedRepo] = useState('api-gateway');
+  const [scans, setScans] = useState<ScanResponse[]>([]);
+  const [repoPath, setRepoPath] = useState('backend/tests/fixtures/sample_repo');
+  const [scanning, setScanning] = useState(false);
+  const [activeScan, setActiveScan] = useState<ScanResponse | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Subtle live progress increment
   useEffect(() => {
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 98) return 68;
-        return prev + 1;
-      });
-    }, 3000);
-    return () => clearInterval(interval);
+    loadScans();
   }, []);
 
-  const handleStartScan = (e: React.FormEvent) => {
+  const loadScans = async () => {
+    try {
+      const data = await api.listScans();
+      setScans(data);
+      if (data.length > 0) {
+        setActiveScan(data[data.length - 1]);
+      }
+    } catch (err: any) {
+      console.error('Failed to load scans:', err);
+    }
+  };
+
+  const handleStartScan = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newScanId = `SCAN-${Math.floor(2292 + Math.random() * 50)}`;
-    const newScan: ScanItem = {
-      id: newScanId,
-      repository: selectedRepo,
-      type: scanType,
-      findings: 'Running',
-      status: { label: 'In Progress', variant: 'run' },
-      duration: '0m 10s'
-    };
-    setScans([newScan, ...scans]);
-    setShowNewScanModal(false);
+    setScanning(true);
+    setErrorMsg(null);
+    try {
+      const newScan = await api.createScan(repoPath);
+      setActiveScan(newScan);
+      await loadScans();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Scan initiation failed');
+    } finally {
+      setScanning(false);
+    }
   };
 
   return (
-    <div className="view-body">
-      <div className="view-heading">
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="border-b border-vt-border pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-          <h2>Scans</h2>
-          <span className="view-sub">Execution &amp; live progress · history &amp; audit trail</span>
-        </div>
-        <div className="vt-actions">
-          <button 
-            className="btn-secondary mono"
-            onClick={() => setShowConfigModal(true)}
-          >
-            SCAN CONFIGURATION
-          </button>
-          <button 
-            className="btn-primary mono"
-            onClick={() => setShowNewScanModal(true)}
-          >
-            NEW SCAN
-          </button>
-        </div>
-      </div>
-
-      {/* Live Scan Card */}
-      <div className="vt-card mt-5">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="vt-card-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className="live-dot" />
-            <span>Scan In Progress · SCAN-2291 · api-gateway</span>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-vt-navy font-mono">Scan Orchestration</span>
+            <span className="text-vt-muted">✱</span>
+            <span className="badge-evidence">7-Stage Pipeline</span>
           </div>
-          <span className="mono" style={{ fontSize: '10px', color: '#55555E' }}>ETA 3 MIN</span>
-        </div>
-        <div className="progress-line">
-          <div className="bar-track">
-            <div 
-              className="bar-fill" 
-              style={{ 
-                width: `${progress}%`, 
-                background: 'linear-gradient(90deg, #5C7CFA, #7A9BFF)' 
-              }} 
-            />
-          </div>
-          <span className="bar-count">{progress}%</span>
-        </div>
-        <div className="vt-note">
-          Stage 4 of 5 · Tracing execution paths through 214 modules · collecting code-level evidence · inconclusive paths flagged.
+          <h1 className="text-3xl font-heading font-bold text-vt-deep-navy">
+            Repository Scans
+          </h1>
+          <p className="text-sm text-vt-muted mt-1 max-w-xl">
+            Deterministic code intelligence paired with Groq-hosted multi-agent reachability triage.
+          </p>
         </div>
       </div>
 
-      {/* History Card */}
-      <div className="vt-card mt-4 overflow-x-auto">
-        <div className="vt-card-label mb-2">History &amp; Audit Trail</div>
-        <table className="vt-table">
-          <thead>
-            <tr>
-              <th>Scan ID</th>
-              <th>Repository</th>
-              <th>Type</th>
-              <th>Findings</th>
-              <th>Status</th>
-              <th>Duration</th>
-            </tr>
-          </thead>
-          <tbody>
-            {scans.map((scan) => (
-              <tr key={scan.id} className="hover:bg-white/[0.02] transition-colors">
-                <td className="font-mono text-white font-medium">{scan.id}</td>
-                <td>{scan.repository}</td>
-                <td>{scan.type}</td>
-                <td>{scan.findings}</td>
-                <td>
-                  <Pill variant={scan.status.variant}>
-                    {scan.status.label}
-                  </Pill>
-                </td>
-                <td>{scan.duration}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {errorMsg && (
+        <div className="p-4 bg-vt-red-light border border-vt-red text-vt-red rounded-lg text-sm flex items-center justify-between">
+          <span>{errorMsg}</span>
+          <button onClick={() => setErrorMsg(null)} className="font-bold">✕</button>
+        </div>
+      )}
+
+      {/* Start Scan Form */}
+      <div className="vt-card space-y-4">
+        <h2 className="font-heading font-bold text-lg text-vt-deep-navy">
+          Initiate Reachability Scan
+        </h2>
+        <form onSubmit={handleStartScan} className="flex flex-col sm:flex-row gap-3">
+          <input
+            type="text"
+            value={repoPath}
+            onChange={(e) => setRepoPath(e.target.value)}
+            placeholder="Target repository path (e.g. backend/tests/fixtures/sample_repo)"
+            className="flex-1 px-4 py-2 border border-vt-border rounded-lg text-sm font-mono focus:border-vt-navy outline-none"
+            required
+          />
+          <button
+            type="submit"
+            disabled={scanning}
+            className="btn-primary whitespace-nowrap"
+          >
+            <Play size={14} />
+            {scanning ? 'Executing Pipeline...' : 'Start 7-Stage Scan'}
+          </button>
+        </form>
       </div>
 
-      {/* New Scan Modal */}
-      {showNewScanModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0E0E12] border border-[#26262E] w-full max-w-md rounded-lg p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-heading text-lg font-semibold text-white">Execute Security Scan</h3>
-              <button onClick={() => setShowNewScanModal(false)} className="text-gray-500 hover:text-white">✕</button>
+      {/* Active Scan Stage Progress (PRD §5) */}
+      {activeScan && (
+        <div className="vt-card space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="mono text-xs text-vt-muted uppercase">Active Pipeline Run</span>
+              <h3 className="font-heading font-bold text-base text-vt-deep-navy">
+                {activeScan.id} · {activeScan.repo_path}
+              </h3>
             </div>
-            <form onSubmit={handleStartScan}>
-              <div className="mb-4">
-                <label className="mono text-[10px] text-[#888888] block mb-2">Target Repository</label>
-                <select
-                  value={selectedRepo}
-                  onChange={(e) => setSelectedRepo(e.target.value)}
-                  className="w-full bg-[#141419] border border-[#2A2A33] px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#FF4655] rounded"
+            <span className={`px-2.5 py-1 rounded text-xs font-bold font-mono ${
+              activeScan.status === 'completed' ? 'badge-validated' : 'badge-uncertain'
+            }`}>
+              {activeScan.status.toUpperCase()}
+            </span>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <h4 className="text-xs font-bold uppercase font-mono text-vt-muted">
+              Workflow Stages (PRD §5)
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {activeScan.stage_progress.map((stg) => (
+                <div
+                  key={stg.stage_id}
+                  className="p-3 border border-vt-border rounded-lg bg-gray-50 flex items-start gap-3"
                 >
-                  <option value="api-gateway">api-gateway</option>
-                  <option value="checkout-service">checkout-service</option>
-                  <option value="billing-worker">billing-worker</option>
-                  <option value="legacy-auth">legacy-auth</option>
-                </select>
-              </div>
-              <div className="mb-6">
-                <label className="mono text-[10px] text-[#888888] block mb-2">Scan Depth</label>
-                <select
-                  value={scanType}
-                  onChange={(e) => setScanType(e.target.value)}
-                  className="w-full bg-[#141419] border border-[#2A2A33] px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#FF4655] rounded"
-                >
-                  <option value="FULL">FULL (Deep AST + Reachability)</option>
-                  <option value="INCREMENTAL">INCREMENTAL (Delta commits)</option>
-                  <option value="DIFF">DIFF (PR branch analysis)</option>
-                </select>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setShowNewScanModal(false)} className="btn-secondary mono">CANCEL</button>
-                <button type="submit" className="btn-primary mono">QUEUE SCAN</button>
-              </div>
-            </form>
+                  <div className="mt-0.5">
+                    {stg.status === 'completed' ? (
+                      <CheckCircle2 size={16} className="text-vt-green" />
+                    ) : stg.status === 'in_progress' ? (
+                      <Clock size={16} className="text-vt-amber animate-spin" />
+                    ) : (
+                      <AlertCircle size={16} className="text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-xs text-vt-ink">
+                        {stg.stage_id}. {stg.name}
+                      </span>
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                        stg.nature === 'Deterministic' ? 'badge-evidence' : 'badge-ai'
+                      }`}>
+                        {stg.nature}
+                      </span>
+                    </div>
+                    {stg.detail && (
+                      <p className="text-[11px] text-vt-muted mt-1 font-mono">
+                        {stg.detail}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Config Modal */}
-      {showConfigModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0E0E12] border border-[#26262E] w-full max-w-md rounded-lg p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-heading text-lg font-semibold text-white">Scan Engine Parameters</h3>
-              <button onClick={() => setShowConfigModal(false)} className="text-gray-500 hover:text-white">✕</button>
-            </div>
-            <div className="space-y-4 text-xs font-mono text-[#8B8B96]">
-              <div className="flex justify-between border-b border-[#1C1C22] pb-2">
-                <span>CONCURRENCY_WORKERS:</span>
-                <span className="text-white">16</span>
-              </div>
-              <div className="flex justify-between border-b border-[#1C1C22] pb-2">
-                <span>AST_REACHABILITY_SOLVER:</span>
-                <span className="text-[#00FF41]">Z3_SYMBOLIC_ENGINE</span>
-              </div>
-              <div className="flex justify-between border-b border-[#1C1C22] pb-2">
-                <span>TIMEOUT_PER_MODULE:</span>
-                <span className="text-white">120s</span>
-              </div>
-              <div className="flex justify-between border-b border-[#1C1C22] pb-2">
-                <span>EVIDENCE_ARTIFACT_RETENTION:</span>
-                <span className="text-white">90 DAYS</span>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end">
-              <button onClick={() => setShowConfigModal(false)} className="btn-primary mono">CLOSE</button>
-            </div>
+      {/* Scans History Table */}
+      <div className="vt-card space-y-4">
+        <h3 className="font-heading font-bold text-base text-vt-deep-navy">
+          Scan History
+        </h3>
+        {scans.length === 0 ? (
+          <p className="text-sm text-vt-muted py-4 text-center">No scans recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-vt-border text-vt-muted font-mono uppercase">
+                <tr>
+                  <th className="py-2.5 px-3">Scan ID</th>
+                  <th className="py-2.5 px-3">Repository</th>
+                  <th className="py-2.5 px-3">Findings</th>
+                  <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3">Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {scans.map((s) => (
+                  <tr
+                    key={s.id}
+                    onClick={() => setActiveScan(s)}
+                    className="hover:bg-vt-tint/20 cursor-pointer"
+                  >
+                    <td className="py-3 px-3 font-mono font-bold text-vt-navy">{s.id}</td>
+                    <td className="py-3 px-3 text-vt-ink font-mono">{s.repo_path}</td>
+                    <td className="py-3 px-3 font-bold">{s.findings_count} findings</td>
+                    <td className="py-3 px-3">
+                      <span className={s.status === 'completed' ? 'badge-validated' : 'badge-uncertain'}>
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-vt-muted">{new Date(s.created_at).toLocaleTimeString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

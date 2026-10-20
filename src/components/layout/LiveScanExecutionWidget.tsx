@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ViewId } from '../../types';
+import { api } from '../../services/api';
+import { ScanResponse } from '../../types/api';
+import { Search } from 'lucide-react';
 
 interface LiveScanWidgetProps {
   onNavigateToScans: () => void;
@@ -9,48 +12,41 @@ interface LiveScanWidgetProps {
 export const LiveScanExecutionWidget: React.FC<LiveScanWidgetProps> = ({ 
   onNavigateToScans,
 }) => {
-  const [pathsCount, setPathsCount] = useState(4202);
-  const totalPaths = 6100;
+  const [latestScan, setLatestScan] = useState<ScanResponse | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setPathsCount((prev) => {
-        if (prev >= 6080) return 4200;
-        return prev + Math.floor(Math.random() * 8) + 1;
-      });
-    }, 2000);
-    return () => clearInterval(timer);
+    api.listScans()
+      .then(scans => {
+        if (scans.length > 0) setLatestScan(scans[scans.length - 1]);
+      })
+      .catch(() => {});
   }, []);
-
-  const progressPercent = Math.min(100, Math.round((pathsCount / totalPaths) * 100));
 
   return (
     <div 
-      className="fixed bottom-12 right-12 bg-black border border-[rgba(255,255,255,0.15)] p-6 w-80 shadow-2xl cursor-pointer hover:border-[rgba(255,255,255,0.35)] transition-all z-30 group"
+      className="fixed bottom-8 right-8 bg-white border border-vt-border shadow-lg rounded-xl p-4 w-72 cursor-pointer hover:border-vt-navy transition-all z-30 group"
       onClick={onNavigateToScans}
-      title="Click to view live Scans audit"
+      title="Click to view live Scans view"
     >
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-2">
         <div className="flex items-center gap-2">
-          <span className="live-dot" />
-          <span className="mono text-[10px] text-white group-hover:text-[#5C7CFA] transition-colors">
-            Live Scan Execution
+          <span className="w-2 h-2 rounded-full bg-vt-navy animate-pulse" />
+          <span className="mono text-[10px] text-vt-deep-navy font-bold uppercase">
+            Pipeline Monitor
           </span>
         </div>
-        <div className="flex gap-1 items-center">
-          <div className="w-1.5 h-1.5 bg-white rounded-full animate-ping opacity-75" />
-          <div className="w-1 h-1 bg-white opacity-20" />
-        </div>
+        <Search size={14} className="text-vt-muted group-hover:text-vt-navy" />
       </div>
-      <div className="h-1 bg-[rgba(255,255,255,0.1)] mb-4 rounded-sm overflow-hidden">
-        <div 
-          className="h-full bg-white shadow-[0_0_10px_#fff] transition-all duration-500 ease-out"
-          style={{ width: `${progressPercent}%` }}
-        />
+
+      <div className="text-xs text-vt-ink font-semibold truncate mb-1">
+        {latestScan ? latestScan.id : 'Ready to Scan'}
       </div>
-      <div className="flex justify-between items-center mono text-[9px] text-[#888888]">
-        <span>Mapping execution paths: {pathsCount.toLocaleString()} / {totalPaths.toLocaleString()}</span>
-        <span className="text-white">{progressPercent}%</span>
+
+      <div className="flex justify-between items-center mono text-[10px] text-vt-muted pt-2 border-t border-gray-100">
+        <span>{latestScan ? `${latestScan.findings_count} findings` : 'Idle'}</span>
+        <span className="text-vt-navy font-bold font-mono">
+          {latestScan?.status.toUpperCase() || 'STANDBY'}
+        </span>
       </div>
     </div>
   );

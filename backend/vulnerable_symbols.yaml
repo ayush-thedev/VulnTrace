@@ -1,0 +1,17 @@
+# VulnTrace AI — Curated Vulnerable Symbols Registry (PRD §7)
+# Maps verified OSV/CVE/GHSA advisories to their vulnerable function/class symbols.
+# Never invent a symbol; only list verified advisory symbols.
+
+jinja2:
+  GHSA-h5c8-rqwp-cp95: "xmlattr"
+  GHSA-h75v-3vvj-5mfj: "xmlattr"
+  CVE-2024-34064: "xmlattr"
+  CVE-2024-22195: "xmlattr"
+
+aiohttp:
+  GHSA-v6wp-4m6f-gcjg: "normalize_path_middleware"
+  CVE-2021-21330: "normalize_path_middleware"
+
+urllib3:
+  GHSA-34jh-p97f-mpxf: "HTTPResponse"
+  CVE-2023-45803: "HTTPResponse"
