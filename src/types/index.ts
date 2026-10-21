@@ -3,6 +3,7 @@ export type ViewId =
   | 'repositories' 
   | 'scans' 
   | 'findings' 
+  | 'fixes'
   | 'dependency-graph' 
   | 'agents' 
   | 'remediation' 
@@ -10,18 +11,19 @@ export type ViewId =
 
 export interface BreadcrumbInfo {
   title: string;
-  badge: string;
+  badge?: string;
 }
 
 export const CRUMB_MAP: Record<ViewId, [string, string]> = {
-  'overview': ['Overview', 'DASH-01'],
-  'repositories': ['Repositories', '23 CONNECTED'],
-  'scans': ['Scans', 'SCAN-2291'],
-  'findings': ['Findings', 'F-2847'],
-  'dependency-graph': ['Dependency Graph', 'API-GATEWAY'],
-  'agents': ['Agents', '4 ACTIVE'],
-  'remediation': ['Remediation', 'RM-1088'],
-  'settings': ['Settings', 'WORKSPACE']
+  'overview': ['Overview', ''],
+  'repositories': ['Repositories', ''],
+  'scans': ['Scans', ''],
+  'findings': ['Findings', ''],
+  'fixes': ['Fixes', ''],
+  'dependency-graph': ['Dependency Graph', ''],
+  'agents': ['Agents', ''],
+  'remediation': ['Fixes', ''],
+  'settings': ['Settings', '']
 };
 
 export type PillVariant = 'ok' | 'warn' | 'run' | 'bad' | 'mut';

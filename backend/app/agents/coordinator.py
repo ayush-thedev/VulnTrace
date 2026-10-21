@@ -1,4 +1,5 @@
 import logging
+import uuid
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -40,7 +41,7 @@ class WorkflowCoordinator:
         async def node_gather_evidence(state: PipelineState) -> Dict[str, Any]:
             try:
                 repo_dir = Path(state.repo_path)
-                results = await evidence_pipeline.run(repo_dir)
+                results = await evidence_pipeline.run(repo_dir, scan_id=state.scan_id)
                 serialized = [
                     {"vuln": v.model_dump(), "evidence": e.model_dump()}
                     for v, e in results
@@ -82,28 +83,25 @@ class WorkflowCoordinator:
 
                 # Agent 3: Remediation Agent
                 try:
-                    current_ver = "unknown"
-                    for imp in evidence.import_sites:
-                        current_ver = vuln.affected_version_range.replace("<", "").strip() or "current"
-                        break
                     remed_proposal = remediation_agent.propose(
                         vuln=vuln,
                         priority=prio_assess,
                         evidence=evidence,
-                        current_version=current_ver
+                        current_version=evidence.resolved_version or evidence.declared_version,
+                        repo_path=state.repo_path
                     )
                 except Exception as e:
                     remed_proposal = RemediationProposal(
                         diff="",
                         target_file="requirements.txt",
-                        original_version="unknown",
-                        target_version="unknown",
+                        original_version=evidence.declared_version or "unknown",
+                        target_version=vuln.fixed_versions[0] if vuln.fixed_versions else "unknown",
                         rationale=f"Remediation proposal unavailable: {e}",
-                        status="unverified",
+                        status="unresolved",
                         is_ai_generated=False
                     )
 
-                finding_id = f"F-{state.scan_id}-{idx + 1:04d}"
+                finding_id = f"finding-{uuid.uuid4().hex}"
                 finding = Finding(
                     id=finding_id,
                     scan_id=state.scan_id,

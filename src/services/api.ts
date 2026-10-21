@@ -4,15 +4,51 @@ import {
   ScanCreateRequest,
   Finding,
   GraphData,
-  HumanReviewRecord
+  HumanReviewRecord,
+  Repository,
+  RepositoryCreateRequest,
+  FixResponse
 } from '../types/api';
 
-const API_BASE_URL = 'http://127.0.0.1:8001/api';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 
 export const api = {
   async getHealth(): Promise<HealthStatus> {
     const res = await fetch(`${API_BASE_URL}/health`);
     if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
+    return res.json();
+  },
+
+  async listRepositories(): Promise<Repository[]> {
+    const res = await fetch(`${API_BASE_URL}/repositories`);
+    if (!res.ok) throw new Error(`Failed to list repositories: ${res.statusText}`);
+    return res.json();
+  },
+
+  async getRepository(repoId: string): Promise<Repository> {
+    const res = await fetch(`${API_BASE_URL}/repositories/${repoId}`);
+    if (!res.ok) throw new Error(`Failed to fetch repository ${repoId}`);
+    return res.json();
+  },
+
+  async createRepository(url: string, branch?: string): Promise<Repository> {
+    const res = await fetch(`${API_BASE_URL}/repositories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, branch } as RepositoryCreateRequest),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Repository registration failed: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async deleteRepository(repoId: string): Promise<{ status: string; id: string }> {
+    const res = await fetch(`${API_BASE_URL}/repositories/${repoId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to delete repository ${repoId}`);
     return res.json();
   },
 
@@ -22,8 +58,9 @@ export const api = {
     return res.json();
   },
 
-  async createScan(repoPath: string): Promise<ScanResponse> {
-    const res = await fetch(`${API_BASE_URL}/scans`, {
+  async createScan(repoPath: string, sync: boolean = false): Promise<ScanResponse> {
+    const url = sync ? `${API_BASE_URL}/scans?sync=true` : `${API_BASE_URL}/scans`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ repo_path: repoPath } as ScanCreateRequest),
@@ -35,6 +72,18 @@ export const api = {
     return res.json();
   },
 
+  async cancelScan(scanId: string): Promise<{ status: string; id: string }> {
+    const res = await fetch(`${API_BASE_URL}/scans/${scanId}/cancel`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`Failed to cancel scan ${scanId}`);
+    return res.json();
+  },
+
+  getScanStreamUrl(scanId: string): string {
+    return `${API_BASE_URL}/scans/${scanId}/stream`;
+  },
+
   async getScan(scanId: string): Promise<ScanResponse> {
     const res = await fetch(`${API_BASE_URL}/scans/${scanId}`);
     if (!res.ok) throw new Error(`Failed to fetch scan ${scanId}`);
@@ -44,6 +93,18 @@ export const api = {
   async getScanFindings(scanId: string): Promise<Finding[]> {
     const res = await fetch(`${API_BASE_URL}/scans/${scanId}/findings`);
     if (!res.ok) throw new Error(`Failed to fetch findings for ${scanId}`);
+    return res.json();
+  },
+
+  async getScanFixes(scanId: string): Promise<FixResponse[]> {
+    const res = await fetch(`${API_BASE_URL}/scans/${scanId}/fixes`);
+    if (!res.ok) throw new Error(`Failed to fetch fixes for scan ${scanId}`);
+    return res.json();
+  },
+
+  async getFix(fixId: string): Promise<FixResponse> {
+    const res = await fetch(`${API_BASE_URL}/fixes/${fixId}`);
+    if (!res.ok) throw new Error(`Failed to fetch fix ${fixId}`);
     return res.json();
   },
 
@@ -83,5 +144,29 @@ export const api = {
     });
     if (!res.ok) throw new Error(`Review recording failed for ${findingId}`);
     return res.json();
+  },
+
+  async dismissFinding(findingId: string, reason: string, notes?: string): Promise<Finding> {
+    const res = await fetch(`${API_BASE_URL}/findings/${findingId}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, notes }),
+    });
+    if (!res.ok) throw new Error(`Dismiss failed for ${findingId}`);
+    return res.json();
+  },
+
+  async runProofTest(findingId: string): Promise<{ status: string; result: string; logs: string; test_code?: string; command?: string }> {
+    const res = await fetch(`${API_BASE_URL}/findings/${findingId}/proof`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`Proof test failed for ${findingId}`);
+    return res.json();
+  },
+
+  async exportFinding(findingId: string, format: 'json' | 'sarif' | 'markdown' | 'csv'): Promise<string> {
+    const res = await fetch(`${API_BASE_URL}/findings/${findingId}/export?format=${format}`);
+    if (!res.ok) throw new Error(`Export failed for ${findingId}`);
+    return res.text();
   },
 };

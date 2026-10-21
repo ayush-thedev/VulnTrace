@@ -1,52 +1,80 @@
 import React, { useState, useEffect } from 'react';
-import { ViewId } from '../../types';
 import { api } from '../../services/api';
 import { ScanResponse } from '../../types/api';
-import { Search } from 'lucide-react';
 
 interface LiveScanWidgetProps {
-  onNavigateToScans: () => void;
-  activeView?: ViewId;
+  onNavigateToScans: (scanId?: string) => void;
 }
 
-export const LiveScanExecutionWidget: React.FC<LiveScanWidgetProps> = ({ 
-  onNavigateToScans,
-}) => {
+export const LiveScanExecutionWidget: React.FC<LiveScanWidgetProps> = ({ onNavigateToScans }) => {
   const [latestScan, setLatestScan] = useState<ScanResponse | null>(null);
 
   useEffect(() => {
-    api.listScans()
-      .then(scans => {
-        if (scans.length > 0) setLatestScan(scans[scans.length - 1]);
-      })
-      .catch(() => {});
+    let mounted = true;
+    const fetchLatest = async () => {
+      try {
+        const scans = await api.listScans();
+        if (mounted && scans.length > 0) {
+          setLatestScan(scans[scans.length - 1]);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    fetchLatest();
+    const interval = setInterval(fetchLatest, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
+  if (!latestScan) return null;
+
+  const isRunning = latestScan.status === 'running' || latestScan.status === 'queued';
+
   return (
-    <div 
-      className="fixed bottom-8 right-8 bg-white border border-vt-border shadow-lg rounded-xl p-4 w-72 cursor-pointer hover:border-vt-navy transition-all z-30 group"
-      onClick={onNavigateToScans}
-      title="Click to view live Scans view"
+    <div
+      onClick={() => onNavigateToScans(latestScan.id)}
+      title="View Scan Execution"
+      style={{
+        position: 'fixed',
+        bottom: '20px',
+        right: '24px',
+        zIndex: 40,
+        backgroundColor: 'var(--bg-primary)',
+        border: `1px solid ${isRunning ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius: 'var(--radius)',
+        padding: '8px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        cursor: 'pointer',
+        fontSize: '12px',
+        transition: 'border-color 150ms ease',
+      }}
     >
-      <div className="flex justify-between items-center mb-2">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-vt-navy animate-pulse" />
-          <span className="mono text-[10px] text-vt-deep-navy font-bold uppercase">
-            Pipeline Monitor
+      <div
+        style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '50%',
+          backgroundColor: isRunning ? 'var(--accent)' : 'var(--semantic-green)',
+        }}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+            {isRunning ? 'Scan in progress' : 'Latest scan'}
+          </span>
+          <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+            ({latestScan.id.slice(0, 8)})
           </span>
         </div>
-        <Search size={14} className="text-vt-muted group-hover:text-vt-navy" />
-      </div>
-
-      <div className="text-xs text-vt-ink font-semibold truncate mb-1">
-        {latestScan ? latestScan.id : 'Ready to Scan'}
-      </div>
-
-      <div className="flex justify-between items-center mono text-[10px] text-vt-muted pt-2 border-t border-gray-100">
-        <span>{latestScan ? `${latestScan.findings_count} findings` : 'Idle'}</span>
-        <span className="text-vt-navy font-bold font-mono">
-          {latestScan?.status.toUpperCase() || 'STANDBY'}
-        </span>
+        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+          {isRunning ? 'Analyzing AST paths...' : `${latestScan.findings_count} findings detected`}
+        </div>
       </div>
     </div>
   );

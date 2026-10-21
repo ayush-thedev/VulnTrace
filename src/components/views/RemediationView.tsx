@@ -1,208 +1,1031 @@
-import React, { useState, useEffect } from 'react';
-import { Finding } from '../../types/api';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Finding, RemediationStatus, ValidationCategory, ScanResponse } from '../../types/api';
 import { api } from '../../services/api';
-import { ShieldCheck } from 'lucide-react';
+import { useAppRouter } from '../../services/router';
+import {
+  Button,
+  Badge,
+  DiffViewer,
+  Tooltip,
+  EmptyState,
+  Skeleton,
+} from '../shared';
+import { useToast } from '../shared/Toast';
+import {
+  GitCommit,
+  CheckCircle2,
+  XCircle,
+  Copy,
+  Download,
+  AlertCircle,
+  ShieldCheck,
+  Layers,
+} from 'lucide-react';
 
-export const RemediationView: React.FC = () => {
+interface FixGroup {
+  id: string;
+  packageName: string;
+  originalVersion: string;
+  targetVersion: string;
+  targetFile: string;
+  diff: string;
+  rationale: string;
+  findings: Finding[];
+  remediationStatus: RemediationStatus;
+  versionStatus?: string;
+  declaredVersion?: string;
+  resolvedVersion?: string;
+  isTransitive?: boolean;
+  parentDependency?: string;
+  status: 'Proposed' | 'Validating' | 'Verified' | 'Failed' | 'Not Needed' | 'Unresolved';
+  validationVerdict: 'Verified' | 'Failed' | 'Inconclusive' | 'Not Run';
+  validationReason?: string;
+  validationChecks: {
+    name: string;
+    passed: boolean;
+    category?: ValidationCategory;
+    duration: number;
+    logs?: string;
+  }[];
+}
+
+const CATEGORY_LABELS: Record<ValidationCategory, string> = {
+  patch_application: 'Patch Application',
+  dependency_resolution: 'Dependency Resolution',
+  security_verification: 'Security Check',
+  test_execution: 'Test Suite',
+};
+
+interface RemediationViewProps {
+  initialScanId?: string;
+}
+
+export const RemediationView: React.FC<RemediationViewProps> = ({ initialScanId }) => {
+  const { route, navigate } = useAppRouter();
+  const { showToast } = useToast();
+  const scanIdFromUrl = initialScanId || route.params.scanId;
+
+  const [scan, setScan] = useState<ScanResponse | null>(null);
+  const [allScans, setAllScans] = useState<ScanResponse[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
-  const [notification, setNotification] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string>('');
+  const [selectedFixId, setSelectedFixId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [validating, setValidating] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+  const [expandedLogIndex, setExpandedLogIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    loadFindings();
-  }, []);
+    setSelectedFixId(null);
+  }, [scanIdFromUrl]);
 
-  const loadFindings = async () => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      const scans = await api.listScans();
-      if (scans.length > 0) {
-        const res = await api.getScanFindings(scans[scans.length - 1].id);
-        setFindings(res);
-        if (res.length > 0) setSelectedFinding(res[0]);
+      api.listScans().then(setAllScans).catch(() => {});
+      let activeScan: ScanResponse | null = null;
+      if (scanIdFromUrl) {
+        try {
+          activeScan = await api.getScan(scanIdFromUrl);
+        } catch {
+          const scans = await api.listScans().catch(() => []);
+          setAllScans(scans);
+          if (scans.length > 0) {
+            activeScan = scans[scans.length - 1];
+            navigate(`/scans/${activeScan.id}/fixes`);
+          } else {
+            setScan(null);
+            setFindings([]);
+            setLoading(false);
+            return;
+          }
+        }
+      } else {
+        const scans = await api.listScans();
+        setAllScans(scans);
+        if (scans.length > 0) {
+          activeScan = scans[scans.length - 1];
+        }
       }
-    } catch (e) {
-      console.error(e);
+
+      if (!activeScan) {
+        setFindings([]);
+        setLoading(false);
+        return;
+      }
+
+      setScan(activeScan);
+      const res = await api.getScanFindings(activeScan.id);
+      setFindings(res);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to load fixes', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [scanIdFromUrl, showToast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Group findings by package and target manifest/version: same package + same target = 1 fix
+  const fixGroups: FixGroup[] = useMemo(() => {
+    const map = new Map<string, FixGroup>();
+
+    findings.forEach((f) => {
+      const key = `${f.vulnerability.package_name}@${f.remediation.target_version || 'current'}`;
+      let group = map.get(key);
+
+      const remStatus = f.remediation.status;
+      const isValidated = f.validation.status === 'validated';
+      const isFailed = f.validation.status === 'failed';
+      const isNotRun = f.validation.status === 'not_run';
+      const isAccepted = f.human_review?.decision === 'accept';
+      const isRejected = f.human_review?.decision === 'reject';
+
+      let status: FixGroup['status'] = 'Proposed';
+      if (remStatus === 'not_needed') {
+        status = 'Not Needed';
+      } else if (remStatus === 'unresolved') {
+        status = 'Unresolved';
+      } else if (isAccepted) {
+        status = 'Verified';
+      } else if (isRejected || isFailed) {
+        status = 'Failed';
+      } else if (isValidated) {
+        status = 'Verified';
+      } else if (f.validation.status === 'unverified') {
+        status = 'Validating';
+      }
+
+      let validationVerdict: FixGroup['validationVerdict'] = 'Not Run';
+      if (remStatus === 'not_needed') {
+        validationVerdict = 'Verified';
+      } else if (isValidated) {
+        validationVerdict = 'Verified';
+      } else if (isFailed) {
+        validationVerdict = 'Failed';
+      } else if (isNotRun) {
+        validationVerdict = 'Not Run';
+      } else {
+        validationVerdict = 'Inconclusive';
+      }
+
+      let validationReason: string | undefined = undefined;
+      if (remStatus === 'not_needed') {
+        validationReason = `Installed version (${f.remediation.original_version}) already satisfies all known advisories. No code modification required.`;
+      } else if (remStatus === 'unresolved') {
+        validationReason = 'Version cannot be automatically updated. Dependency is unpinned or transitive; manual dependency resolution required.';
+      } else if (isFailed) {
+        // Find failed check log
+        const failedCheck = f.validation.checks_run?.find((c) => !c.passed);
+        validationReason = failedCheck
+          ? `Failed check: ${failedCheck.check_name}. ${failedCheck.output || 'Manual inspection required.'}`
+          : 'Validation tests failed in sandbox environment. Manual inspection required.';
+      } else if (f.validation.status === 'unverified') {
+        validationReason = 'Sandbox validation unverified due to dynamic runtime dependency or inconclusive environment.';
+      }
+
+      if (!group) {
+        const checks = (f.validation.checks_run || []).map((c) => ({
+          name: c.check_name,
+          passed: c.passed,
+          category: c.category,
+          duration: c.duration_seconds,
+          logs: c.output,
+        }));
+
+        group = {
+          id: key,
+          packageName: f.vulnerability.package_name,
+          originalVersion: f.remediation.original_version,
+          targetVersion: f.remediation.target_version,
+          targetFile: f.remediation.target_file,
+          diff: f.remediation.diff,
+          rationale: f.remediation.rationale,
+          findings: [f],
+          remediationStatus: remStatus,
+          versionStatus: f.remediation.version_status || f.evidence.version_status,
+          declaredVersion: f.remediation.declared_version || f.evidence.declared_version,
+          resolvedVersion: f.remediation.resolved_version || f.evidence.resolved_version,
+          isTransitive: f.remediation.is_transitive ?? f.evidence.is_transitive,
+          parentDependency: f.remediation.parent_dependency,
+          status,
+          validationVerdict,
+          validationReason,
+          validationChecks: checks,
+        };
+        map.set(key, group);
+      } else {
+        group.findings.push(f);
+      }
+    });
+
+    return Array.from(map.values());
+  }, [findings]);
+
+  useEffect(() => {
+    if (!selectedFixId && fixGroups.length > 0) {
+      setSelectedFixId(fixGroups[0].id);
+    }
+  }, [fixGroups, selectedFixId]);
+
+  const selectedFix = fixGroups.find((g) => g.id === selectedFixId) || fixGroups[0];
+
+  const handleValidate = async () => {
+    if (!selectedFix || selectedFix.findings.length === 0) return;
+    setValidating(true);
+    try {
+      const primaryFinding = selectedFix.findings[0];
+      const updated = await api.validateRemediation(primaryFinding.id);
+      setFindings((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+      showToast(`Validation suite completed: ${updated.validation.status.toUpperCase()}`, 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Validation failed', 'error');
+    } finally {
+      setValidating(false);
     }
   };
 
-  const handleReview = async (decision: 'accept' | 'reject' | 'needs_more_info') => {
-    if (!selectedFinding) return;
+  const handleHumanReview = async (decision: 'accept' | 'reject' | 'needs_more_info') => {
+    if (!selectedFix || selectedFix.findings.length === 0) return;
+    if (decision === 'reject' && !reviewNote.trim()) {
+      showToast('A note is required when rejecting a remediation proposal.', 'error');
+      return;
+    }
+    setReviewing(true);
     try {
-      const updated = await api.recordHumanReview(selectedFinding.id, decision, notes);
-      setSelectedFinding(updated);
-      setFindings(prev => prev.map(f => f.id === updated.id ? updated : f));
-      setNotification(`Review recorded: ${decision.toUpperCase()}`);
-      setNotes('');
+      for (const f of selectedFix.findings) {
+        await api.recordHumanReview(f.id, decision, reviewNote);
+      }
+      showToast(`Review recorded: ${decision.toUpperCase()}`, 'info');
+      setReviewNote('');
+      await loadData();
     } catch (err: any) {
-      setNotification(`Error: ${err.message}`);
+      showToast(err.message || 'Failed to record review', 'error');
     } finally {
-      setTimeout(() => setNotification(null), 3000);
+      setReviewing(false);
     }
   };
+
+  const handleCopyPRDescription = () => {
+    if (!selectedFix) return;
+    const advisories = Array.from(new Set(selectedFix.findings.map((f) => f.vulnerability.id))).join(', ');
+    const desc = `## Summary
+Bump ${selectedFix.packageName} from ${selectedFix.originalVersion} to ${selectedFix.targetVersion} in \`${selectedFix.targetFile}\`.
+Resolves advisories: ${advisories}.
+
+### Plain Explanation
+${selectedFix.rationale || `Upgrades ${selectedFix.packageName} to eliminate vulnerable code pathways identified during static analysis.`}
+
+### Changes
+\`\`\`diff
+${selectedFix.diff}
+\`\`\`
+
+### Validation Table
+| Check | Status | Duration |
+|-------|--------|----------|
+${selectedFix.validationChecks.map((c) => `| ${c.name} | ${c.passed ? 'PASSED' : 'FAILED'} | ${c.duration}s |`).join('\n')}
+
+### Proof Before / After
+- Before: Vulnerable call path detected in call graph.
+- After: Fixed version verified in micro-sandbox environment. Zero new reachability paths observed.
+
+### Rollback Notes
+If regressions are observed, revert commit and restore \`${selectedFix.targetFile}\` to ${selectedFix.originalVersion}.
+`;
+    navigator.clipboard.writeText(desc);
+    showToast('Copied PR description to clipboard', 'info');
+  };
+
+  const handleDownloadPatch = () => {
+    if (!selectedFix || !selectedFix.diff) {
+      showToast('No diff available to download', 'error');
+      return;
+    }
+    const blob = new Blob([selectedFix.diff], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vulntrace-${selectedFix.packageName}.patch`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Downloaded .patch file', 'info');
+  };
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px 0' }}>
+        <Skeleton height="32px" width="300px" />
+        <Skeleton height="200px" />
+      </div>
+    );
+  }
+
+  if (fixGroups.length === 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {scan && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              borderBottom: '1px solid var(--border)',
+              paddingBottom: '12px',
+            }}
+          >
+            {allScans.length > 1 && (
+              <select
+                value={scan.id || scanIdFromUrl || ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    navigate(`/scans/${e.target.value}/fixes`);
+                  }
+                }}
+                style={{
+                  height: '30px',
+                  padding: '0 8px',
+                  fontSize: '12px',
+                  fontFamily: 'var(--font-mono)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-primary)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  maxWidth: '240px',
+                }}
+                title="Switch repository scan"
+              >
+                {allScans.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.id}: {s.repo_path || s.repo_url} ({s.findings_count} findings)
+                  </option>
+                ))}
+              </select>
+            )}
+            <span style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-primary)' }}>
+              {scan.repo_url || scan.repo_path || 'Repository'}
+            </span>
+            <span style={{ color: 'var(--border)' }}>•</span>
+            <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+              Scan {scan.id.slice(0, 8)}
+            </span>
+            {scan.commit_sha && (
+              <>
+                <span style={{ color: 'var(--border)' }}>•</span>
+                <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                  commit {scan.commit_sha.slice(0, 7)}
+                </span>
+              </>
+            )}
+            {scan.created_at && (
+              <>
+                <span style={{ color: 'var(--border)' }}>•</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {new Date(scan.created_at).toLocaleString()}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+        <EmptyState
+          title={scan ? "No remediation proposals" : "No scans executed yet"}
+          description={
+            scan
+              ? "No fixes currently proposed for this scan."
+              : "Execute a scan to generate verified remediation patches and dependency upgrades."
+          }
+          actionLabel="Go to Scans"
+          onAction={() => navigate('/scans')}
+        />
+      </div>
+    );
+  }
+
+  // Deduplicate advisory IDs for display
+  const uniqueAdvisories = selectedFix
+    ? Array.from(new Set(selectedFix.findings.map((f) => f.vulnerability.id)))
+    : [];
+
+  const canApprove =
+    selectedFix &&
+    selectedFix.validationVerdict === 'Verified' &&
+    selectedFix.remediationStatus !== 'not_needed' &&
+    selectedFix.remediationStatus !== 'unresolved' &&
+    selectedFix.diff.trim().length > 0;
 
   return (
-    <div className="space-y-8">
-      {notification && (
-        <div className="p-4 bg-vt-tint border border-vt-navy text-vt-deep-navy rounded-lg text-sm flex items-center justify-between">
-          <span>{notification}</span>
-          <button onClick={() => setNotification(null)} className="font-bold">✕</button>
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="border-b border-vt-border pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-vt-navy font-mono">Assisted Remediation</span>
-            <span className="text-vt-muted">✱</span>
-            <span className="badge-ai">Remediation Agent + Sandbox Validation</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Header bar */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          borderBottom: '1px solid var(--border)',
+          paddingBottom: '12px',
+        }}
+      >
+        {scan && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {allScans.length > 1 && (
+              <select
+                value={scan.id || scanIdFromUrl || ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    navigate(`/scans/${e.target.value}/fixes`);
+                  }
+                }}
+                style={{
+                  height: '30px',
+                  padding: '0 8px',
+                  fontSize: '12px',
+                  fontFamily: 'var(--font-mono)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-primary)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  maxWidth: '240px',
+                }}
+                title="Switch repository scan"
+              >
+                {allScans.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.id}: {s.repo_path || s.repo_url} ({s.findings_count} findings)
+                  </option>
+                ))}
+              </select>
+            )}
+            <span style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-primary)' }}>
+              {scan.repo_url || scan.repo_path || 'Repository'}
+            </span>
+            <span style={{ color: 'var(--border)' }}>•</span>
+            <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+              Scan {scan.id.slice(0, 8)}
+            </span>
+            {scan.commit_sha && (
+              <>
+                <span style={{ color: 'var(--border)' }}>•</span>
+                <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                  commit {scan.commit_sha.slice(0, 7)}
+                </span>
+              </>
+            )}
+            {scan.created_at && (
+              <>
+                <span style={{ color: 'var(--border)' }}>•</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {new Date(scan.created_at).toLocaleString()}
+                </span>
+              </>
+            )}
           </div>
-          <h1 className="text-3xl font-heading font-bold text-vt-deep-navy">
-            Patch &amp; Remediation Review
-          </h1>
-          <p className="text-sm text-vt-muted mt-1 max-w-xl">
-            Proposed dependency bumps validated through controlled test execution. Retains human review before any change is applied.
-          </p>
-        </div>
-      </div>
+        )}
 
-      {/* Non-Claim Notice (PRD §3, §17) */}
-      <div className="p-3.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-vt-muted flex items-start gap-2.5">
-        <ShieldCheck size={16} className="text-vt-navy mt-0.5" />
-        <div>
-          <strong className="text-vt-deep-navy font-semibold">Honest Scope Notice (PRD §3 &amp; §17):</strong> Automated Pull Request generation is explicitly out of scope. VulnTrace AI generates reviewable unified diffs and validates them in an isolated sandbox, leaving commit and merge actions to human engineers.
-        </div>
-      </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <div>
+            <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 500 }}>
+              Remediation &amp; Patch Verification
+            </h1>
+            <p style={{ margin: 0, marginTop: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              Isolated sandbox testing with mandatory human sign-off before code merging.
+            </p>
+          </div>
 
-      {/* Main Review Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Proposals List (Left) */}
-        <div className="lg:col-span-5 space-y-3">
-          <h2 className="text-xs font-bold uppercase font-mono text-vt-muted">
-            Pending Remediation Proposals ({findings.length})
-          </h2>
-          {findings.map((f) => (
-            <div
-              key={f.id}
-              onClick={() => setSelectedFinding(f)}
-              className={`vt-card cursor-pointer p-4 transition-all ${
-                selectedFinding?.id === f.id
-                  ? 'border-vt-navy bg-vt-tint/30 shadow-md ring-1 ring-vt-navy'
-                  : 'hover:border-vt-navy/60'
-              }`}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleValidate}
+              disabled={validating || selectedFix?.remediationStatus === 'unresolved'}
             >
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="font-mono text-xs font-bold text-vt-deep-navy">
-                  {f.vulnerability.package_name}
-                </span>
-                <span className="mono text-[10px] bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
-                  {f.remediation.original_version} → {f.remediation.target_version}
-                </span>
-              </div>
-              <div className="text-xs text-vt-ink font-heading line-clamp-1 mb-2">
-                {f.vulnerability.summary}
-              </div>
-              <div className="flex items-center justify-between text-[11px] pt-2 border-t border-vt-border/60">
-                <span className="mono text-vt-muted">Status: {f.remediation.status}</span>
-                {f.human_review ? (
-                  <span className="font-mono font-bold text-vt-navy uppercase text-[10px]">
-                    ✓ {f.human_review.decision}
+              {validating ? 'Running sandbox...' : 'Re-run validation suite'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Grid: Left 340px Fixes List, Right Detail Inspector */}
+      <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: '16px', alignItems: 'start' }}>
+        {/* Left: Fixes List */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            backgroundColor: 'var(--bg-primary)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: '10px 12px',
+              backgroundColor: 'var(--bg-surface)',
+              borderBottom: '1px solid var(--border)',
+              fontSize: '11px',
+              fontWeight: 500,
+              textTransform: 'uppercase',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            Remediation Proposals ({fixGroups.length})
+          </div>
+
+          {fixGroups.map((group) => {
+            const isSelected = selectedFix?.id === group.id;
+            const groupAdvisories = Array.from(new Set(group.findings.map((f) => f.vulnerability.id)));
+
+            return (
+              <div
+                key={group.id}
+                onClick={() => setSelectedFixId(group.id)}
+                style={{
+                  padding: '12px',
+                  borderBottom: '1px solid var(--border)',
+                  backgroundColor: isSelected ? 'var(--accent-dim)' : 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>
+                    {group.packageName}
                   </span>
-                ) : (
-                  <span className="text-[10px] text-vt-amber font-mono">Awaiting Review</span>
-                )}
+                  {group.remediationStatus === 'not_needed' ? (
+                    <span style={{ fontSize: '11px', color: 'var(--semantic-green)', fontWeight: 500 }}>
+                      v{group.originalVersion} (Secure)
+                    </span>
+                  ) : group.remediationStatus === 'unresolved' ? (
+                    <span style={{ fontSize: '11px', color: 'var(--semantic-amber)', fontWeight: 500 }}>
+                      v{group.originalVersion} (Unresolved)
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontFamily: 'var(--font-mono)',
+                        color: 'var(--accent)',
+                      }}
+                    >
+                      {group.originalVersion} → {group.targetVersion}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  {group.remediationStatus === 'not_needed'
+                    ? `Already safe against ${groupAdvisories.length} advisory${groupAdvisories.length > 1 ? 's' : ''}`
+                    : `Resolves ${groupAdvisories.length} advisory${groupAdvisories.length > 1 ? 's' : ''} (${groupAdvisories.slice(0, 2).join(', ')}${groupAdvisories.length > 2 ? '...' : ''})`}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                    {group.targetFile}
+                  </span>
+                  <FixStatusBadge status={group.status} />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* Diff & Review Inspector (Right) */}
-        <div className="lg:col-span-7 space-y-6">
-          {selectedFinding ? (
-            <div className="vt-card space-y-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="mono text-xs text-vt-muted">Target: {selectedFinding.remediation.target_file}</span>
-                  <h3 className="font-heading font-bold text-xl text-vt-deep-navy mt-1">
-                    Upgrade {selectedFinding.vulnerability.package_name} ({selectedFinding.remediation.original_version} → {selectedFinding.remediation.target_version})
-                  </h3>
+        {/* Right: Selected Fix Details & Review */}
+        {selectedFix && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Recommendation Summary */}
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                padding: '14px',
+                backgroundColor: 'var(--bg-primary)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {selectedFix.remediationStatus === 'not_needed' ? (
+                    <ShieldCheck size={18} style={{ color: 'var(--semantic-green)' }} />
+                  ) : selectedFix.remediationStatus === 'unresolved' ? (
+                    <AlertCircle size={18} style={{ color: 'var(--semantic-amber)' }} />
+                  ) : (
+                    <GitCommit size={18} style={{ color: 'var(--accent)' }} />
+                  )}
+                  <span style={{ fontSize: '14px', fontWeight: 500 }}>
+                    {selectedFix.remediationStatus === 'not_needed'
+                      ? `${selectedFix.packageName} is already patched (v${selectedFix.originalVersion})`
+                      : selectedFix.remediationStatus === 'unresolved'
+                      ? `${selectedFix.packageName} requires manual resolution`
+                      : `Upgrade ${selectedFix.packageName} to ${selectedFix.targetVersion}`}
+                  </span>
                 </div>
-                <span className="badge-evidence text-xs">
-                  {selectedFinding.vulnerability.id}
-                </span>
-              </div>
-
-              {/* Unified Diff */}
-              <div className="space-y-1.5">
-                <span className="mono text-xs font-bold text-vt-muted uppercase block">
-                  Generated Unified Diff
-                </span>
-                <div className="bg-[#1A1A2E] text-slate-100 p-4 rounded-lg font-mono text-xs overflow-x-auto">
-                  <pre>{selectedFinding.remediation.diff || 'No diff available.'}</pre>
-                </div>
-              </div>
-
-              {/* Rationale */}
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
-                <strong className="text-vt-deep-navy block font-mono">Remediation Rationale:</strong>
-                <p className="text-vt-muted leading-relaxed">{selectedFinding.remediation.rationale}</p>
-              </div>
-
-              {/* Human Decision Box */}
-              <div className="pt-4 border-t border-vt-border space-y-3">
-                <h4 className="font-heading font-bold text-sm text-vt-deep-navy">
-                  Human Review &amp; Sign-off
-                </h4>
-                {selectedFinding.human_review && (
-                  <div className="p-3 bg-vt-tint/50 border border-vt-navy rounded-lg text-xs space-y-1">
-                    <div className="font-mono font-bold text-vt-deep-navy">
-                      Current Decision: {selectedFinding.human_review.decision.toUpperCase()}
-                    </div>
-                    {selectedFinding.human_review.reviewer_notes && (
-                      <div className="text-vt-muted">
-                        Notes: {selectedFinding.human_review.reviewer_notes}
-                      </div>
-                    )}
+                {selectedFix.diff && (
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleCopyPRDescription}
+                      icon={<Copy size={12} />}
+                    >
+                      Copy PR Description
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleDownloadPatch}
+                      icon={<Download size={12} />}
+                    >
+                      Download .patch
+                    </Button>
                   </div>
                 )}
+              </div>
 
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Review notes..."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="flex-1 px-3 py-1.5 text-xs bg-white border border-vt-border rounded-lg outline-none focus:border-vt-navy"
-                  />
-                  <button
-                    onClick={() => handleReview('accept')}
-                    className="bg-vt-green hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleReview('reject')}
-                    className="bg-vt-red hover:bg-rose-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg"
-                  >
-                    Reject
-                  </button>
-                  <button
-                    onClick={() => handleReview('needs_more_info')}
-                    className="btn-secondary text-xs"
-                  >
-                    Need Info
-                  </button>
+              {/* Version & Dependency Context */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                  gap: '8px',
+                  padding: '10px 12px',
+                  backgroundColor: 'var(--bg-surface)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '12px',
+                }}
+              >
+                <div>
+                  <span style={{ color: 'var(--text-secondary)' }}>Detected Version: </span>
+                  <code style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
+                    {selectedFix.originalVersion}
+                  </code>{' '}
+                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                    ({selectedFix.versionStatus || 'pinned'})
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-secondary)' }}>Target Version: </span>
+                  <code style={{ fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--accent)' }}>
+                    {selectedFix.targetVersion}
+                  </code>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-secondary)' }}>Manifest: </span>
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>{selectedFix.targetFile}</code>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-secondary)' }}>Type: </span>
+                  <span>{selectedFix.isTransitive ? 'Transitive dependency' : 'Direct manifest dependency'}</span>
                 </div>
               </div>
+
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '18px' }}>
+                {selectedFix.rationale}
+              </div>
+
+              <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layers size={13} />
+                <span>
+                  Addresses {uniqueAdvisories.length} advisory{uniqueAdvisories.length > 1 ? 's' : ''}:{' '}
+                  {uniqueAdvisories.map((id) => (
+                    <code key={id} style={{ fontFamily: 'var(--font-mono)', marginRight: '4px' }}>
+                      {id}
+                    </code>
+                  ))}
+                </span>
+              </div>
             </div>
-          ) : (
-            <div className="vt-card text-center py-20 text-vt-muted">
-              Select a remediation proposal to review.
+
+            {/* Diff Viewer */}
+            {selectedFix.diff ? (
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  overflow: 'hidden',
+                  backgroundColor: 'var(--bg-primary)',
+                }}
+              >
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-surface)',
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    textTransform: 'uppercase',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  Manifest Changes
+                </div>
+                <DiffViewer
+                  diff={selectedFix.diff}
+                  filename={selectedFix.targetFile}
+                />
+              </div>
+            ) : selectedFix.remediationStatus === 'not_needed' ? (
+              <div
+                style={{
+                  border: '1px solid var(--semantic-green)',
+                  borderRadius: 'var(--radius)',
+                  padding: '14px',
+                  backgroundColor: 'var(--semantic-green-light)',
+                  color: 'var(--semantic-green)',
+                  fontSize: '13px',
+                }}
+              >
+                <strong>No Patch Required:</strong> The manifest already specifies {selectedFix.packageName}=={selectedFix.originalVersion}, which is outside the affected range for all detected advisories.
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: '1px solid var(--semantic-amber)',
+                  borderRadius: 'var(--radius)',
+                  padding: '14px',
+                  backgroundColor: 'var(--semantic-amber-light)',
+                  color: 'var(--semantic-amber)',
+                  fontSize: '13px',
+                }}
+              >
+                <strong>Manual Resolution Required:</strong> VulnTrace cannot safely patch unpinned or transitive dependencies without explicit project resolution.
+              </div>
+            )}
+
+            {/* Validation Checklist */}
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                backgroundColor: 'var(--bg-primary)',
+                padding: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '12px', fontWeight: 500, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  Sandbox Validation Suite
+                </span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color:
+                      selectedFix.validationVerdict === 'Verified'
+                        ? 'var(--semantic-green)'
+                        : selectedFix.validationVerdict === 'Failed'
+                        ? 'var(--semantic-red)'
+                        : 'var(--semantic-amber)',
+                  }}
+                >
+                  Verdict: {selectedFix.validationVerdict.toUpperCase()}
+                </span>
+              </div>
+
+              {selectedFix.validationReason && (
+                <div
+                  style={{
+                    padding: '8px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${
+                      selectedFix.validationVerdict === 'Verified'
+                        ? 'var(--semantic-green)'
+                        : 'var(--semantic-red)'
+                    }`,
+                    backgroundColor:
+                      selectedFix.validationVerdict === 'Verified'
+                        ? 'var(--semantic-green-light)'
+                        : 'var(--semantic-red-light)',
+                    color:
+                      selectedFix.validationVerdict === 'Verified'
+                        ? 'var(--semantic-green)'
+                        : 'var(--semantic-red)',
+                    fontSize: '12px',
+                  }}
+                >
+                  {selectedFix.validationReason}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {selectedFix.validationChecks.length > 0 ? (
+                  selectedFix.validationChecks.map((chk, i) => {
+                    const isExpanded = expandedLogIndex === i;
+                    const catLabel = chk.category ? CATEGORY_LABELS[chk.category] : undefined;
+
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '8px 10px',
+                          backgroundColor: 'var(--bg-surface)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                        }}
+                      >
+                        <div
+                          onClick={() => setExpandedLogIndex(isExpanded ? null : i)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {chk.passed ? (
+                              <CheckCircle2 size={13} style={{ color: 'var(--semantic-green)' }} />
+                            ) : (
+                              <XCircle size={13} style={{ color: 'var(--semantic-red)' }} />
+                            )}
+                            <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                              {chk.name}
+                            </span>
+                            {catLabel && (
+                              <span
+                                style={{
+                                  fontSize: '10px',
+                                  padding: '1px 6px',
+                                  borderRadius: '3px',
+                                  backgroundColor: 'var(--bg-primary)',
+                                  border: '1px solid var(--border)',
+                                  color: 'var(--text-secondary)',
+                                }}
+                              >
+                                {catLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                              {chk.duration}s
+                            </span>
+                            {chk.logs && (
+                              <span style={{ fontSize: '11px', color: 'var(--accent)' }}>
+                                {isExpanded ? 'Hide log' : 'View log'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {isExpanded && chk.logs && (
+                          <div
+                            style={{
+                              marginTop: '4px',
+                              padding: '6px 8px',
+                              backgroundColor: 'var(--bg-primary)',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px',
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '11px',
+                              color: 'var(--text-secondary)',
+                              whiteSpace: 'pre-wrap',
+                              maxHeight: '160px',
+                              overflowY: 'auto',
+                            }}
+                          >
+                            {chk.logs}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div
+                    style={{
+                      padding: '12px',
+                      fontSize: '12px',
+                      color: 'var(--text-secondary)',
+                      backgroundColor: 'var(--bg-surface)',
+                      borderRadius: 'var(--radius-sm)',
+                      textAlign: 'center',
+                    }}
+                  >
+                    No sandbox validation checks have executed yet. Click &quot;Re-run validation suite&quot; to test this patch.
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Human Review Sign-Off Card */}
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                backgroundColor: 'var(--bg-primary)',
+                padding: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ fontSize: '12px', fontWeight: 500, textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                Human Reviewer Decision (Strict Sign-off)
+              </div>
+
+              <div>
+                <textarea
+                  placeholder="Reviewer notes (required if rejecting proposal)..."
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  style={{
+                    width: '100%',
+                    minHeight: '60px',
+                    padding: '8px',
+                    fontSize: '12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border)',
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Tooltip
+                  content={
+                    !canApprove
+                      ? selectedFix.remediationStatus === 'not_needed'
+                        ? 'No patch needed: Dependency is already safe.'
+                        : selectedFix.remediationStatus === 'unresolved'
+                        ? 'Approve is disabled for unresolved transitive dependencies.'
+                        : 'Approve is disabled until the patch passes sandbox validation.'
+                      : undefined
+                  }
+                >
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!canApprove || reviewing}
+                    onClick={() => handleHumanReview('accept')}
+                  >
+                    Approve Fix
+                  </Button>
+                </Tooltip>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={reviewing}
+                  onClick={() => handleHumanReview('needs_more_info')}
+                >
+                  Request Changes
+                </Button>
+
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={reviewing}
+                  onClick={() => handleHumanReview('reject')}
+                >
+                  Reject Proposal
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+};
+
+const FixStatusBadge: React.FC<{ status: FixGroup['status'] }> = ({ status }) => {
+  switch (status) {
+    case 'Verified':
+      return <Badge variant="verified">Verified</Badge>;
+    case 'Failed':
+      return <Badge variant="fix-now">Failed</Badge>;
+    case 'Validating':
+      return <Badge variant="fix-soon">Validating</Badge>;
+    case 'Not Needed':
+      return <Badge variant="verified">Already Patched</Badge>;
+    case 'Unresolved':
+      return <Badge variant="fix-soon">Unresolved</Badge>;
+    case 'Proposed':
+    default:
+      return <Badge variant="default">Proposed</Badge>;
+  }
 };

@@ -396,7 +396,7 @@ Closing line: *Scanners say what is present. VulnTrace AI investigates what appe
 
 ## 21. Open questions for the team (do not guess — ask or leave a clearly marked placeholder)
 
-1. SIH Problem Statement ID, title, theme, category, Team ID (placeholders only).
+1. Problem Statement ID, title, theme, category, Team ID (placeholders only).
 2. MVP language/ecosystem (default proposal: Python/PyPI).
 3. Is `openai/gpt-oss-120b` actually integrated/tested, or only a candidate?
 4. Next.js (deck) vs Vite (repo) — update the deck or the code? (Default: keep Vite.)

@@ -1,149 +1,115 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { ViewId } from '../../types';
 import { HealthStatus, ScanResponse } from '../../types/api';
 import { api } from '../../services/api';
-import { 
-  CheckCircle2, 
-  HelpCircle, 
-  Layers, 
-  ArrowRight
-} from 'lucide-react';
+import { CheckCircle2, HelpCircle, ArrowRight, ShieldAlert, Search, GitCommit, Cpu } from 'lucide-react';
 
-interface OverviewViewProps {
-  onNavigate: (view: ViewId) => void;
-}
+interface OverviewViewProps { onNavigate: (view: ViewId) => void; }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [recentScans, setRecentScans] = useState<ScanResponse[]>([]);
 
   useEffect(() => {
-    loadOverviewData();
+    api.getHealth().catch(() => null).then(h => h && setHealth(h));
+    api.listScans().catch(() => []).then(s => s && setRecentScans(s));
   }, []);
 
-  const loadOverviewData = async () => {
-    try {
-      const [h, s] = await Promise.all([
-        api.getHealth().catch(() => null),
-        api.listScans().catch(() => [])
-      ]);
-      setHealth(h);
-      setRecentScans(s);
-    } catch (e) {
-      console.error('Error loading overview:', e);
-    }
-  };
+  const reachableCount = recentScans.filter(s => s.findings_count > 0).length;
+  const totalFindings = recentScans.reduce((a, s) => a + s.findings_count, 0);
 
   return (
-    <div className="space-y-8">
-      {/* Memorable Distinction Hero (PRD §2) */}
-      <div className="vt-card bg-vt-tint/30 border-vt-navy/40 p-6 space-y-3 relative overflow-hidden">
-        <div className="flex items-center gap-2">
-          <span className="mono text-xs font-bold uppercase tracking-wider text-vt-navy">
-            VulnTrace AI
+    <div style={{display:'flex',flexDirection:'column',gap:'28px'}}>
+
+      {/* Hero */}
+      <div style={{borderBottom:'1px solid var(--border-1)',paddingBottom:'24px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}}>
+          <span style={{fontSize:'11px',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'0.8px',fontFamily:"'JetBrains Mono',monospace"}}>VulnTrace AI</span>
+          <span style={{color:'var(--border-2)'}}>·</span>
+          <span style={{fontSize:'11px',color:'var(--text-tertiary)'}}>Team TECHNOVISIONERS</span>
+          <span className={`badge ${health?.status === 'healthy' ? 'badge-validated' : 'badge-ai'}`} style={{marginLeft:'auto'}}>
+            Backend {health?.status?.toUpperCase() || 'OFFLINE'}
           </span>
-          <span className="text-vt-navy">✱</span>
-          <span className="text-xs text-vt-muted">Team TECHNOVISIONERS</span>
         </div>
-
-        <blockquote className="text-lg md:text-xl font-heading font-bold text-vt-deep-navy border-l-4 border-vt-navy pl-4 py-1">
-          &ldquo;A scanner identifies a vulnerable package. VulnTrace investigates whether the application appears to reach the vulnerable functionality — and helps developers decide what to do next.&rdquo;
-        </blockquote>
-
-        <p className="text-xs text-vt-muted max-w-2xl leading-relaxed">
-          Traditional scanners stop at package alerts. VulnTrace connects Tree-sitter code intelligence, FalkorDB openCypher graph queries, Groq-hosted multi-agent triage, and isolated sandbox validation while keeping a human in the loop.
+        <h1 style={{fontSize:'22px',letterSpacing:'-0.4px',marginBottom:'8px'}}>Evidence-Driven Vulnerability Reachability</h1>
+        <p style={{color:'var(--text-secondary)',fontSize:'13px',maxWidth:'640px',lineHeight:'1.6'}}>
+          A scanner identifies a vulnerable package. VulnTrace investigates whether your application <em>appears</em> to reach the vulnerable functionality — using deterministic Tree-sitter AST analysis and FalkorDB graph queries — then helps you decide what to do next.
         </p>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div
-          onClick={() => onNavigate('scans')}
-          className="vt-card cursor-pointer hover:border-vt-navy transition-all"
-        >
-          <span className="mono text-xs text-vt-muted uppercase block mb-1">Total Scans Run</span>
-          <div className="text-3xl font-heading font-bold text-vt-deep-navy">{recentScans.length}</div>
-          <span className="text-xs text-vt-navy flex items-center gap-1 mt-2 font-medium">
-            Run new scan <ArrowRight size={12} />
-          </span>
-        </div>
-
-        <div
-          onClick={() => onNavigate('findings')}
-          className="vt-card cursor-pointer hover:border-vt-navy transition-all"
-        >
-          <span className="mono text-xs text-vt-muted uppercase block mb-1">Findings Ledger</span>
-          <div className="text-3xl font-heading font-bold text-vt-deep-navy">
-            {recentScans.reduce((acc, s) => acc + s.findings_count, 0)}
+      {/* KPI Row */}
+      <div className="card-grid-4">
+        {[
+          { label: 'Total Scans', value: recentScans.length, sub: 'Run new scan →', action: () => onNavigate('scans'), icon: Search },
+          { label: 'Total Findings', value: totalFindings, sub: 'Inspect reachability →', action: () => onNavigate('findings'), icon: ShieldAlert },
+          { label: 'Scans with Findings', value: reachableCount, sub: 'Review remediation →', action: () => onNavigate('remediation'), icon: GitCommit },
+          { label: 'Active Agents', value: 3, sub: 'View pipeline →', action: () => onNavigate('agents'), icon: Cpu },
+        ].map(({ label, value, sub, action, icon: Icon }) => (
+          <div key={label} className="card" style={{cursor:'pointer'}} onClick={action}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:'12px'}}>
+              <span className="stat-label">{label}</span>
+              <Icon size={14} style={{color:'var(--text-tertiary)'}} />
+            </div>
+            <div className="stat-value">{value}</div>
+            <div className="stat-trend" style={{marginTop:'8px',color:'var(--accent)',cursor:'pointer',fontSize:'12px'}}>
+              {sub} <ArrowRight size={11} />
+            </div>
           </div>
-          <span className="text-xs text-vt-navy flex items-center gap-1 mt-2 font-medium">
-            Inspect reachability <ArrowRight size={12} />
-          </span>
-        </div>
+        ))}
+      </div>
 
-        <div className="vt-card">
-          <span className="mono text-xs text-vt-muted uppercase block mb-1">Reachability Engine</span>
-          <div className="text-base font-bold text-vt-deep-navy font-heading mt-1">Tree-sitter + FalkorDB</div>
-          <span className="text-[11px] text-vt-muted block mt-2 font-mono">
-            Bounded openCypher (1..10 hops)
-          </span>
+      {/* Pipeline Architecture */}
+      <div className="card">
+        <div style={{marginBottom:'16px'}}>
+          <h2 style={{marginBottom:'4px'}}>7-Stage Pipeline Architecture</h2>
+          <p style={{color:'var(--text-secondary)',fontSize:'12px'}}>Deterministic evidence collection → Multi-agent assessment → Human review</p>
         </div>
-
-        <div className="vt-card">
-          <span className="mono text-xs text-vt-muted uppercase block mb-1">Human-in-the-Loop</span>
-          <div className="text-base font-bold text-vt-deep-navy font-heading mt-1">Review Required</div>
-          <span className="text-[11px] text-vt-muted block mt-2 font-mono">
-            No unvalidated automated PRs
-          </span>
+        <div style={{display:'flex',flexDirection:'column',gap:'0'}}>
+          {[
+            { n: '01', name: 'Repository & Manifests', nature: 'Deterministic', detail: 'Parses requirements.txt / pyproject.toml / package.json' },
+            { n: '02', name: 'Vulnerability Lookup', nature: 'Deterministic', detail: 'Queries OSV.dev — real CVE/GHSA advisories, no fabricated data' },
+            { n: '03', name: 'Code Analysis (Tree-sitter)', nature: 'Deterministic', detail: 'AST-level import sites, function definitions, entry points' },
+            { n: '04', name: 'Graph Construction', nature: 'Deterministic', detail: 'FalkorDB openCypher call-graph with bounded 1–10 hop queries' },
+            { n: '05', name: 'Reachability Agent', nature: 'LLM-assisted', detail: 'Groq llama-3.3-70b — may only cite verified graph node IDs' },
+            { n: '06', name: 'Risk Prioritizer + Remediation Agent', nature: 'LLM-assisted', detail: 'Categorical bands: Fix now / Schedule fix / Monitor / Human review' },
+            { n: '07', name: 'Sandbox Validation', nature: 'Deterministic', detail: 'Isolated test regression + OSV re-scan; no PR auto-creation' },
+          ].map(({ n, name, nature, detail }) => (
+            <div key={n} className="stage-row">
+              <span className="mono" style={{color:'var(--text-tertiary)',minWidth:'24px'}}>{n}</span>
+              <div style={{flex:1}}>
+                <span className="stage-name">{name}</span>
+                <span style={{fontSize:'11px',color:'var(--text-tertiary)',display:'block',marginTop:'1px'}}>{detail}</span>
+              </div>
+              <span className={`badge ${nature === 'Deterministic' ? 'badge-evidence' : 'badge-ai'}`}>{nature}</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Honest Implementation Status & Capabilities Panel (PRD §13, §17, §20) */}
-      <div className="vt-card space-y-4">
-        <div className="flex items-center justify-between border-b border-vt-border pb-3">
-          <div className="flex items-center gap-2">
-            <Layers className="text-vt-navy" size={18} />
-            <h2 className="font-heading font-bold text-lg text-vt-deep-navy">
-              System Capabilities &amp; Verification Matrix (PRD §17)
-            </h2>
-          </div>
-          <span className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold ${
-            health?.status === 'healthy' ? 'badge-validated' : 'badge-uncertain'
-          }`}>
-            Backend: {health?.status?.toUpperCase() || 'OFFLINE'}
-          </span>
-        </div>
-
-        <p className="text-xs text-vt-muted">
-          In strict compliance with PRD §0 and §17 honesty rules, this matrix reports real runtime capabilities without fake completeness.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          {health?.capabilities ? (
-            Object.entries(health.capabilities).map(([key, val]) => (
-              <div key={key} className="p-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-between">
+      {/* Capabilities Matrix */}
+      {health?.capabilities && (
+        <div className="card">
+          <h2 style={{marginBottom:'16px'}}>Capabilities Matrix (Live from /api/health)</h2>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'8px'}}>
+            {Object.entries(health.capabilities).map(([key, val]) => (
+              <div key={key} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 12px',background:'var(--surface-2)',borderRadius:'6px',border:'1px solid var(--border-1)'}}>
                 <div>
-                  <span className="font-mono text-gray-500 uppercase text-[10px] block">
-                    {key.replace(/_/g, ' ')}
-                  </span>
-                  <span className="font-semibold text-vt-deep-navy">{val}</span>
+                  <div style={{fontSize:'10px',color:'var(--text-tertiary)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'2px',fontFamily:"'JetBrains Mono',monospace"}}>{key.replace(/_/g,' ')}</div>
+                  <div style={{fontSize:'12px',color:'var(--text-primary)',fontWeight:500}}>{val}</div>
                 </div>
                 {val.includes('Not claimed') ? (
-                  <span className="mono text-[10px] text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">Out of Scope</span>
+                  <span style={{fontSize:'10px',color:'var(--text-tertiary)',background:'var(--surface-3)',padding:'2px 6px',borderRadius:'4px'}}>Out of Scope</span>
                 ) : val.includes('Connected') || val.includes('Ready') || val.includes('Verified') ? (
-                  <CheckCircle2 size={16} className="text-vt-green" />
+                  <CheckCircle2 size={15} style={{color:'var(--green)',flexShrink:0}} />
                 ) : (
-                  <HelpCircle size={16} className="text-vt-amber" />
+                  <HelpCircle size={15} style={{color:'var(--amber)',flexShrink:0}} />
                 )}
               </div>
-            ))
-          ) : (
-            <div className="col-span-2 text-center py-4 text-vt-muted">
-              Capabilities loaded from FastAPI /api/health when backend is running.
-            </div>
-          )}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
     </div>
   );
 };

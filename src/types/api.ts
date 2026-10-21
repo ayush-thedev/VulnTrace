@@ -2,9 +2,28 @@
 
 export type ReachabilityVerdict = 'reachable' | 'not_reachable' | 'uncertain';
 export type PriorityBand = 'Fix now' | 'Schedule fix' | 'Monitor' | 'Human review';
-export type RemediationStatus = 'proposed' | 'validated' | 'failed' | 'unverified';
+export type RemediationStatus = 'proposed' | 'validated' | 'failed' | 'unverified' | 'not_needed' | 'unresolved';
 export type ValidationStatus = 'not_run' | 'validated' | 'failed' | 'unverified';
 export type HumanReviewDecision = 'accept' | 'reject' | 'needs_more_info';
+export type ValidationCategory = 'patch_application' | 'dependency_resolution' | 'security_verification' | 'test_execution';
+
+export interface Repository {
+  id: string;
+  url: string;
+  owner: string;
+  name: string;
+  default_branch: string;
+  language?: string;
+  created_at: string;
+  last_scan_id?: string;
+  last_scan_at?: string;
+  status?: string;
+}
+
+export interface RepositoryCreateRequest {
+  url: string;
+  branch?: string;
+}
 
 export interface PathHop {
   node_id: string;
@@ -38,8 +57,15 @@ export interface EvidenceBundle {
   import_sites: ImportSite[];
   vulnerable_symbol_known: boolean;
   vulnerable_symbol_name?: string;
+  vulnerable_function?: string;
   caveats: string[];
   unresolved_calls_count: number;
+  unresolved_calls?: any[];
+  declared_version?: string;
+  resolved_version?: string;
+  version_status?: string;
+  manifest_file?: string;
+  is_transitive?: boolean;
   analyzer_name: string;
   graph_node_ids: string[];
 }
@@ -79,12 +105,18 @@ export interface RemediationProposal {
   target_version: string;
   rationale: string;
   status: RemediationStatus;
+  version_status?: string;
+  declared_version?: string;
+  resolved_version?: string;
+  is_transitive?: boolean;
+  parent_dependency?: string;
   is_ai_generated: boolean;
 }
 
 export interface ValidationCheck {
   check_name: string;
   passed: boolean;
+  category?: ValidationCategory;
   command?: string;
   output?: string;
   duration_seconds: number;
@@ -139,12 +171,29 @@ export interface ScanCreateRequest {
 export interface ScanResponse {
   id: string;
   repo_path: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  repo_url?: string;
+  commit_sha?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage_progress: ScanStage[];
   findings_count: number;
   created_at: string;
   completed_at?: string;
   error_message?: string;
+}
+
+export interface FixResponse {
+  id: string;
+  scan_id: string;
+  finding_id: string;
+  package_name: string;
+  target_file: string;
+  original_version: string;
+  target_version: string;
+  diff: string;
+  rationale: string;
+  status: RemediationStatus;
+  validation_verdict?: string;
+  created_at: string;
 }
 
 export interface ReactFlowNode {

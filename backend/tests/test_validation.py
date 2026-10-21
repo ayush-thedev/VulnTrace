@@ -66,12 +66,12 @@ async def test_sandbox_validation_invalid_patch_fails():
 
 def test_api_scans_and_findings_flow():
     # 1. Trigger Scan
-    response = client.post("/api/scans", json={"repo_path": str(FIXTURE_DIR.resolve())})
+    response = client.post("/api/scans?sync=true", json={"repo_path": str(FIXTURE_DIR.resolve())})
     assert response.status_code == 200
     scan_data = response.json()
     scan_id = scan_data["id"]
     assert scan_data["status"] == "completed"
-    assert len(scan_data["stage_progress"]) == 7
+    assert len(scan_data["stage_progress"]) == 8
 
     # 2. List Findings
     findings_resp = client.get(f"/api/scans/{scan_id}/findings")

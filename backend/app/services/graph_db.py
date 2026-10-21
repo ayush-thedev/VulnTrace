@@ -165,3 +165,13 @@ class VulnTraceGraphDB:
         return edges
 
 graph_db = VulnTraceGraphDB()
+
+# Registry storing isolated call graphs per scan
+SCAN_GRAPHS: Dict[str, VulnTraceGraphDB] = {}
+
+def get_or_create_scan_graph(scan_id: str) -> VulnTraceGraphDB:
+    if not scan_id:
+        return graph_db
+    if scan_id not in SCAN_GRAPHS:
+        SCAN_GRAPHS[scan_id] = VulnTraceGraphDB()
+    return SCAN_GRAPHS[scan_id]

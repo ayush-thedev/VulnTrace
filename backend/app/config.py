@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     FALKORDB_HOST: str = "localhost"
     FALKORDB_PORT: int = 6379
     BACKEND_HOST: str = "0.0.0.0"

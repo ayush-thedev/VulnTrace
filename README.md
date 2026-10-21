@@ -82,7 +82,7 @@ backend/venv/Scripts/pip install -r backend/requirements.txt   # Windows
 backend/venv/Scripts/pytest.exe backend/tests
 
 # Start FastAPI server on port 8000
-backend\venv\Scripts\uvicorn.exe backend.app.main:app --reload --port 8001
+backend\venv\Scripts\uvicorn.exe backend.app.main:app --reload --port 8000
 ```
 
 ### Step 4: Setup & Run Frontend

@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from backend.app.models.schemas import VulnerabilityInfo
 
 logger = logging.getLogger("vulntrace.osv")
@@ -43,6 +43,26 @@ OFFLINE_OSV_FIXTURES: Dict[str, List[Dict[str, Any]]] = {
                         {
                             "type": "ECOSYSTEM",
                             "events": [{"introduced": "0"}, {"fixed": "3.1.4"}]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "requests:2.25.1": [
+        {
+            "id": "GHSA-j8r2-6x86-q33q",
+            "aliases": ["CVE-2023-32681"],
+            "summary": "Requests Proxy-Authorization header leak",
+            "details": "Requests before 2.31.0 leaks Proxy-Authorization headers to destination servers when following redirects.",
+            "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:N/A:N"}],
+            "affected": [
+                {
+                    "package": {"name": "requests", "ecosystem": "PyPI"},
+                    "ranges": [
+                        {
+                            "type": "ECOSYSTEM",
+                            "events": [{"introduced": "0"}, {"fixed": "2.31.0"}]
                         }
                     ]
                 }
@@ -94,6 +114,66 @@ class OSVClient:
 
         self._cache[cache_key] = []
         return []
+
+    async def query_batch(self, items: List[Tuple[str, str, str]]) -> Dict[str, List[VulnerabilityInfo]]:
+        """
+        Batch query OSV for multiple packages at once via /v1/querybatch.
+        items: List of (package_name, version, ecosystem)
+        Returns: Dict mapping 'package_name:version' -> List[VulnerabilityInfo]
+        """
+        results_map: Dict[str, List[VulnerabilityInfo]] = {}
+        to_query: List[Tuple[str, str, str]] = []
+
+        for pkg_name, ver, eco in items:
+            key = f"{pkg_name.lower()}:{ver}"
+            if key in self._cache:
+                results_map[key] = self._cache[key]
+            else:
+                to_query.append((pkg_name, ver, eco))
+
+        if not to_query:
+            return results_map
+
+        # Query live batch API in chunks of 500
+        if not self.offline_mode:
+            batch_url = "https://api.osv.dev/v1/querybatch"
+            chunk_size = 500
+            for i in range(0, len(to_query), chunk_size):
+                chunk = to_query[i : i + chunk_size]
+                payload = {
+                    "queries": [
+                        {"package": {"name": name, "ecosystem": eco}, "version": ver}
+                        for name, ver, eco in chunk
+                    ]
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(batch_url, json=payload)
+                        if resp.status_code == 200:
+                            raw_results = resp.json().get("results", [])
+                            for (name, ver, eco), res_entry in zip(chunk, raw_results):
+                                k = f"{name.lower()}:{ver}"
+                                vulns = self._parse_vulns(res_entry.get("vulns", []), name, ver, eco)
+                                self._cache[k] = vulns
+                                results_map[k] = vulns
+                        else:
+                            logger.warning(f"OSV batch query returned status {resp.status_code}")
+                except Exception as e:
+                    logger.warning(f"OSV live batch query failed: {e}")
+
+        # Fallback for any items still not resolved
+        for name, ver, eco in to_query:
+            k = f"{name.lower()}:{ver}"
+            if k not in results_map:
+                if k in OFFLINE_OSV_FIXTURES:
+                    vulns = self._parse_vulns(OFFLINE_OSV_FIXTURES[k], name, ver, eco)
+                    self._cache[k] = vulns
+                    results_map[k] = vulns
+                else:
+                    self._cache[k] = []
+                    results_map[k] = []
+
+        return results_map
 
     def _parse_vulns(self, raw_vulns: List[Dict[str, Any]], package_name: str, version: str, ecosystem: str) -> List[VulnerabilityInfo]:
         results = []

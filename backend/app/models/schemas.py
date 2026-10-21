@@ -5,9 +5,10 @@ from datetime import datetime
 # Core Semantics (PRD §7, §8, §12)
 ReachabilityVerdict = Literal["reachable", "not_reachable", "uncertain"]
 PriorityBand = Literal["Fix now", "Schedule fix", "Monitor", "Human review"]
-RemediationStatus = Literal["proposed", "validated", "failed", "unverified"]
+RemediationStatus = Literal["proposed", "validated", "failed", "unverified", "not_needed", "unresolved"]
 ValidationStatus = Literal["not_run", "validated", "failed", "unverified"]
 HumanReviewDecision = Literal["accept", "reject", "needs_more_info"]
+ValidationCategory = Literal["patch_application", "dependency_resolution", "security_verification", "test_execution"]
 
 class PathHop(BaseModel):
     node_id: str
@@ -38,8 +39,15 @@ class EvidenceBundle(BaseModel):
     import_sites: List[ImportSite] = Field(default_factory=list)
     vulnerable_symbol_known: bool
     vulnerable_symbol_name: Optional[str] = None
+    vulnerable_function: Optional[str] = None
     caveats: List[str] = Field(default_factory=list)
     unresolved_calls_count: int = 0
+    unresolved_calls: Optional[List[Any]] = Field(default_factory=list)
+    declared_version: Optional[str] = None
+    resolved_version: Optional[str] = None
+    version_status: Optional[str] = "pinned"
+    manifest_file: Optional[str] = "requirements.txt"
+    is_transitive: bool = False
     analyzer_name: str = "Tree-sitter Python Call Graph Analyzer"
     graph_node_ids: List[str] = Field(default_factory=list)
 
@@ -75,11 +83,17 @@ class RemediationProposal(BaseModel):
     target_version: str
     rationale: str
     status: RemediationStatus = "proposed"
+    version_status: Optional[str] = "pinned"
+    declared_version: Optional[str] = None
+    resolved_version: Optional[str] = None
+    is_transitive: bool = False
+    parent_dependency: Optional[str] = None
     is_ai_generated: bool = True
 
 class ValidationCheck(BaseModel):
     check_name: str
     passed: bool
+    category: Optional[ValidationCategory] = None
     command: Optional[str] = None
     output: Optional[str] = None
     duration_seconds: float = 0.0
@@ -142,12 +156,28 @@ class ScanCreateRequest(BaseModel):
 class ScanResponse(BaseModel):
     id: str
     repo_path: str
-    status: Literal["queued", "running", "completed", "failed"]
+    repo_url: Optional[str] = None
+    commit_sha: Optional[str] = None
+    status: Literal["queued", "running", "completed", "failed", "cancelled"] = "running"
     stage_progress: List[ScanStage] = Field(default_factory=list)
     findings_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+
+class FixResponse(BaseModel):
+    id: str
+    scan_id: str
+    finding_id: str
+    package_name: str
+    target_file: str
+    original_version: str
+    target_version: str
+    diff: str
+    rationale: str
+    status: RemediationStatus = "proposed"
+    validation_verdict: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 # React Flow Graph Schema (PRD §10, §14)
 class ReactFlowPosition(BaseModel):
