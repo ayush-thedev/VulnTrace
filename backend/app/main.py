@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.app.config import settings
-from backend.app.api import health, scans, findings, repositories
+from backend.app.api import health, scans, findings, repositories, ws_scans
 
 # Ensure Git directories are included in PATH on Windows
 for git_dir in [
@@ -65,6 +65,7 @@ app.include_router(findings.fixes_router, prefix="/api")
 app.include_router(findings.fixes_router, prefix="")
 app.include_router(repositories.router, prefix="/api")
 app.include_router(repositories.router, prefix="")
+app.include_router(ws_scans.router)
 
 @app.get("/")
 def root():
