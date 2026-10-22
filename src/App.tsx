@@ -14,11 +14,44 @@ import { CommandPalette } from './components/common/CommandPalette';
 import { ShortcutSheet } from './components/common/ShortcutSheet';
 import { useAppRouter } from './services/router';
 import { ToastProvider } from './components/shared/Toast';
+import { InspectorPanel, InspectorData } from './components/common/InspectorPanel';
+import { ScanClient } from './services/scanClient';
 
 export const AppContent: React.FC = () => {
   const { route, navigate } = useAppRouter();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorData, setInspectorData] = useState<InspectorData>({
+    logLength: 0,
+    lastOffset: -1,
+    nextSeq: 0,
+    bufferedFrames: 0,
+    dupCount: 0,
+    nackCount: 0,
+    connectionState: 'idle',
+    stateHash: '00000000',
+    replayStateHash: '00000000',
+    hashMatch: true,
+  });
+  const clientRef = useRef<ScanClient | null>(null);
+
+  useEffect(() => {
+    const scanId = route.params.scanId || 'SCAN-B6E50D';
+    const client = new ScanClient({
+      scanId,
+      onStateUpdate: (_state, stats) => {
+        setInspectorData(stats);
+      },
+    });
+    clientRef.current = client;
+    client.init().catch(() => {});
+
+    return () => {
+      client.dispose();
+    };
+  }, [route.params.scanId]);
+
   const lastKeyRef = useRef<{ key: string; time: number } | null>(null);
 
   // Global Keyboard shortcuts: Cmd+K, ?, g r, g s, g f
@@ -229,6 +262,16 @@ export const AppContent: React.FC = () => {
       <ShortcutSheet
         isOpen={shortcutSheetOpen}
         onClose={() => setShortcutSheetOpen(false)}
+      />
+
+      {/* Binary Stream Inspector */}
+      <InspectorPanel
+        data={inspectorData}
+        visible={inspectorOpen}
+        onToggle={() => setInspectorOpen((prev) => !prev)}
+        onReplay={() => {
+          clientRef.current?.replayFromZero().catch(() => {});
+        }}
       />
     </div>
   );

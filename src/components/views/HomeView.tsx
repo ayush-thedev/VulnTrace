@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Input, Button } from '../shared';
 import { ArrowRight, Play } from 'lucide-react';
+import { LockfileDropZone } from '../common/LockfileDropZone';
+import { useToast } from '../shared/Toast';
 
 interface HomeViewProps {
   onStartScan: (target: string) => void;
@@ -8,6 +10,7 @@ interface HomeViewProps {
 
 export const HomeView: React.FC<HomeViewProps> = ({ onStartScan }) => {
   const [repoInput, setRepoInput] = useState('');
+  const { showToast } = useToast();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +93,20 @@ export const HomeView: React.FC<HomeViewProps> = ({ onStartScan }) => {
           <Play size={12} />
           <span>Try the demo</span>
         </button>
+      </div>
+      {/* Lockfile Drop Zone */}
+      <div style={{ width: '100%', marginTop: '24px' }}>
+        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+          Or inspect package-lock.json (client-side)
+        </div>
+        <LockfileDropZone
+          onDependenciesParsed={(deps) => {
+            showToast('Parsed ' + deps.length + ' dependencies from package-lock.json', 'success');
+          }}
+          onError={(msg) => {
+            showToast(msg, 'error');
+          }}
+        />
       </div>
     </div>
   );
