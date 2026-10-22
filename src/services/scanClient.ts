@@ -1,6 +1,6 @@
 // WebSocket scan client + multi-tab coordination via navigator.locks + BroadcastChannel
 
-import { decodeFrame, encodeNack, typeNameMap } from './binaryProtocol';
+import { decodeFrame, encodeNack, typeNameMap, SERVER_TYPES } from './binaryProtocol';
 import { openEventDB, appendEvent, loadAllEvents, getLastEventForScan, createEventChannel, announceOffset } from './eventStore';
 import { createReceiverState, processFrame, checkGapTimeout, getReceiverStats, type ReceiverState } from './receiver';
 import { reduce, replay, INITIAL_STATE, type ScanState, type ScanEvent } from './reducer';
@@ -41,6 +41,8 @@ export class ScanClient {
   private options: ScanClientOptions;
   private lockHeld = false;
   private disposed = false;
+  private _cachedReplayHash = '';
+  private _cachedReplayLen = -1;
 
   constructor(options: ScanClientOptions) {
     this.options = options;
@@ -279,15 +281,22 @@ export class ScanClient {
     }
   }
 
+  private getReplayHash(): string {
+    if (this.eventLog.length !== this._cachedReplayLen) {
+      const replayState = replay(this.eventLog);
+      const replayStr = canonicalJsonStringify(mapToObj(replayState));
+      this._cachedReplayHash = fnv1aHash(replayStr);
+      this._cachedReplayLen = this.eventLog.length;
+    }
+    return this._cachedReplayHash;
+  }
+
   private emitUpdate(): void {
     if (this.options.onStateUpdate) {
       const stats = getReceiverStats(this.receiverState);
       const stateStr = canonicalJsonStringify(mapToObj(this.scanState));
       const stateHash = fnv1aHash(stateStr);
-      // Replay hash for comparison
-      const replayState = replay(this.eventLog);
-      const replayStr = canonicalJsonStringify(mapToObj(replayState));
-      const replayHash = fnv1aHash(replayStr);
+      const replayHash = this.getReplayHash();
 
       this.options.onStateUpdate(this.scanState, {
         logLength: this.eventLog.length,
@@ -312,18 +321,85 @@ export class ScanClient {
     } as ScanEvent));
     this.eventLog = scanEvents;
     this.scanState = replay(scanEvents);
+    this._cachedReplayLen = -1; // Invalidate cache
     this.emitUpdate();
   }
 
   getState(): ScanState { return this.scanState; }
+  getEventLog(): ScanEvent[] { return [...this.eventLog]; }
   isSocketOwner(): boolean { return this.lockHeld; }
+
+  async ingestLockfileData(
+    fileName: string,
+    deps: Array<{ name: string; version: string; ecosystem: string; source: string; isPathDep: boolean; sourceAvailable: boolean }>
+  ): Promise<void> {
+    const startedPayload = JSON.stringify({ repoPath: fileName, repoUrl: `file://${fileName}` });
+    await this.deliverRawFrame(SERVER_TYPES.SCAN_STARTED, this.receiverState.nextSeq, startedPayload);
+
+    for (const dep of deps) {
+      await this.deliverRawFrame(SERVER_TYPES.DEPENDENCY_FOUND, this.receiverState.nextSeq, JSON.stringify(dep));
+      // If path dep has missing source, generate an initial vuln + path + candidate verdict
+      // to let reducer exercise the Reachable -> Uncertain downgrade rule
+      if (dep.isPathDep && !dep.sourceAvailable) {
+        const vulnId = `PATH-MISSING-${dep.name}`;
+        const pathId = `path-${dep.name}`;
+        await this.deliverRawFrame(
+          SERVER_TYPES.VULN_FOUND,
+          this.receiverState.nextSeq,
+          JSON.stringify({
+            vulnId,
+            aliases: ['CWE-706'],
+            summary: `Unresolved path dependency '${dep.name}' target directory missing`,
+            severity: 'Medium',
+            packageName: dep.name,
+            ecosystem: dep.ecosystem,
+            affectedRange: '*',
+            fixedVersions: [],
+            advisoryUrl: 'https://cwe.mitre.org/data/definitions/706.html',
+          })
+        );
+        await this.deliverRawFrame(
+          SERVER_TYPES.PATH_FOUND,
+          this.receiverState.nextSeq,
+          JSON.stringify({
+            pathId,
+            entryPointId: 'entrypoint',
+            vulnerableTargetId: dep.name,
+            hops: [
+              { nodeId: 'entrypoint', filePath: fileName, functionName: 'require', lineNumber: 1, isEntryPoint: true, callResolved: false },
+              { nodeId: dep.name, filePath: `local:${dep.name}`, functionName: 'target', lineNumber: 1, isEntryPoint: false, callResolved: false },
+            ],
+            containsUnresolvedCall: true,
+          })
+        );
+        // Candidate is 'reachable', but pure reducer will downgrade to 'uncertain' because sourceAvailable is false
+        await this.deliverRawFrame(
+          SERVER_TYPES.VERDICT,
+          this.receiverState.nextSeq,
+          JSON.stringify({
+            vulnId,
+            verdict: 'reachable',
+            confidenceNote: 'Direct local path link declared',
+            caveats: ['Local directory target does not exist or was not included with package lock'],
+            evidenceRefs: [pathId, 'entrypoint', dep.name],
+            rationale: `Path dependency ${dep.name} declared via link/file: but source directory is not present locally`,
+          })
+        );
+      }
+    }
+
+    await this.deliverRawFrame(
+      SERVER_TYPES.SCAN_COMPLETED,
+      this.receiverState.nextSeq,
+      JSON.stringify({ findingsCount: this.scanState.verdicts.size })
+    );
+  }
+
   getInspectorData(): InspectorData {
     const stats = getReceiverStats(this.receiverState);
     const stateStr = canonicalJsonStringify(mapToObj(this.scanState));
     const stateHash = fnv1aHash(stateStr);
-    const replayState = replay(this.eventLog);
-    const replayStr = canonicalJsonStringify(mapToObj(replayState));
-    const replayHash = fnv1aHash(replayStr);
+    const replayHash = this.getReplayHash();
     return {
       logLength: this.eventLog.length,
       lastOffset: this.lastOffset,

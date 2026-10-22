@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Finding, GraphData, ScanResponse } from '../../types/api';
+import { Finding, GraphData, ScanResponse, ReachabilityVerdict, PriorityBand } from '../../types/api';
 import { api } from '../../services/api';
 import { useAppRouter } from '../../services/router';
 import { PathFlowGraph } from '../common/PathFlowGraph';
@@ -16,6 +16,8 @@ import {
   EmptyState,
 } from '../shared';
 import { useToast } from '../shared/Toast';
+import { useBinaryStream } from '../../context/BinaryStreamContext';
+import { selectVulnerabilities, FullFindingView } from '../../services/reducer';
 import {
   ShieldAlert,
   ExternalLink,
@@ -31,12 +33,90 @@ import {
   Terminal,
   Activity,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 
 interface FindingsViewProps {
   initialScanId?: string;
   initialFindingId?: string;
   initialTab?: string;
+}
+
+function convertToFinding(f: FullFindingView, scanId: string): Finding {
+  const rawVerdict = (f.verdict?.verdict as any) || 'uncertain';
+  const verdict: ReachabilityVerdict =
+    rawVerdict === 'reachable' ? 'reachable' : rawVerdict === 'not_reachable' ? 'not_reachable' : 'uncertain';
+
+  const band: PriorityBand =
+    (f.risk?.band as any) ||
+    (verdict === 'reachable' ? 'Fix now' : verdict === 'uncertain' ? 'Schedule fix' : 'Monitor');
+
+  return {
+    id: f.vulnId,
+    scan_id: scanId,
+    vulnerability: {
+      id: f.vuln.vulnId,
+      aliases: f.vuln.aliases || [],
+      summary: f.vuln.summary || '',
+      severity: f.vuln.severity || 'Medium',
+      package_name: f.vuln.packageName,
+      package_ecosystem: f.vuln.ecosystem || 'npm',
+      affected_version_range: f.vuln.affectedRange || '*',
+      fixed_versions: f.vuln.fixedVersions || [],
+      advisory_url: f.vuln.advisoryUrl,
+    },
+    reachability: {
+      verdict,
+      confidence_note:
+        f.verdict?.downgradeReason
+          ? `⚠️ Downgraded: ${f.verdict.downgradeReason}`
+          : f.verdict?.confidenceNote || 'Evaluated via pure event reducer',
+      caveats: f.verdict?.caveats || [],
+      evidence_refs: f.verdict?.evidenceRefs || [],
+      rationale: f.verdict?.rationale || '',
+      is_ai_generated: false,
+    },
+    evidence: {
+      candidate_paths: [],
+      import_sites: [],
+      vulnerable_symbol_known: true,
+      vulnerable_function: 'imported_target',
+      caveats: f.verdict?.caveats || [],
+      unresolved_calls_count: 0,
+      declared_version: 'local',
+      analyzer_name: 'pure_reducer_ast',
+      graph_node_ids: [],
+      manifest_file: 'package-lock.json',
+    },
+    priority: {
+      band,
+      rationale: f.risk?.rationale || f.verdict?.rationale || '',
+      is_ai_generated: false,
+    },
+    remediation: {
+      diff: f.remediation?.diff || '',
+      target_file: f.remediation?.targetFile || 'package.json',
+      original_version: f.remediation?.originalVersion || 'local',
+      target_version: f.remediation?.targetVersion || 'safe',
+      rationale: f.remediation?.rationale || 'Address path vulnerability',
+      status: (f.remediation?.status as any) || 'proposed',
+      is_ai_generated: false,
+    },
+    validation: {
+      status: (f.validation?.status as any) || 'not_run',
+      checks_run: (f.validation?.checks || []).map((c) => ({
+        check_name: c.checkName,
+        passed: c.passed,
+        category: (c.category as any) || 'security_verification',
+        duration_seconds: c.durationSeconds,
+      })),
+      executed_in_sandbox: f.validation?.executedInSandbox ?? false,
+    },
+    provenance: {
+      deterministic_stages: ['IndexedDB Event Log', 'Pure Reducer', 'DataView Binary Frame Decoder'],
+      llm_stages: [],
+    },
+  };
 }
 
 export const FindingsView: React.FC<FindingsViewProps> = ({
@@ -46,6 +126,7 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
 }) => {
   const { route, navigate } = useAppRouter();
   const { showToast } = useToast();
+  const { scanState, inspectorData } = useBinaryStream();
 
   const scanIdFromUrl = initialScanId || route.params.scanId;
   const findingIdFromUrl = initialFindingId || route.params.findingId;
@@ -109,6 +190,36 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
     setLoading(true);
     setError(null);
     try {
+      // If scanId matches an active pure reducer scan or is a lockfile scan, synthesize directly
+      if (
+        (scanIdFromUrl && scanIdFromUrl.startsWith('lockfile-')) ||
+        (scanState.scanId && (scanState.scanId === scanIdFromUrl || !scanIdFromUrl) && scanState.vulnerabilities.size > 0)
+      ) {
+        const pureScanId = scanState.scanId || scanIdFromUrl || 'lockfile-scan';
+        const synthesizedScan: ScanResponse = {
+          id: pureScanId,
+          repo_path: scanState.repoPath || 'package-lock.json',
+          repo_url: scanState.repoUrl || 'file://package-lock.json',
+          status: (scanState.status === 'stalled' || scanState.status === 'idle') ? 'running' : scanState.status as 'queued' | 'running' | 'completed' | 'failed' | 'cancelled',
+          created_at: new Date(scanState.startedAt || Date.now()).toISOString(),
+          findings_count: scanState.verdicts.size,
+          stage_progress: [],
+        };
+        setScan(synthesizedScan);
+        const vulns = selectVulnerabilities(scanState);
+        const synthFindings: Finding[] = vulns.map((v) => convertToFinding(v, pureScanId));
+        setFindings(synthFindings);
+        if (findingIdFromUrl) {
+          const found = synthFindings.find((f) => f.id === findingIdFromUrl);
+          if (found) selectFinding(found, false, pureScanId);
+          else if (synthFindings.length > 0) selectFinding(synthFindings[0], false, pureScanId);
+        } else if (synthFindings.length > 0) {
+          selectFinding(synthFindings[0], false, pureScanId);
+        }
+        setLoading(false);
+        return;
+      }
+
       api.listScans().then(setAllScans).catch(() => {});
       let activeScan: ScanResponse | null = null;
       if (scanIdFromUrl) {
@@ -183,7 +294,30 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
       const g = await api.getFindingGraph(finding.id);
       setGraphData(g);
     } catch {
-      setGraphData({ nodes: [], edges: [] });
+      // Synthesize graph from scanState.paths if available in pure reducer state
+      const pkgName = finding.vulnerability.package_name;
+      const relatedPath = Array.from(scanState.paths.values()).find(
+        (p) => p.pathId.includes(pkgName) || p.vulnerableTargetId.includes(pkgName)
+      );
+      if (relatedPath && relatedPath.hops.length > 0) {
+        const nodes = relatedPath.hops.map((h, i) => ({
+          id: h.nodeId,
+          type: (h.isEntryPoint ? 'entry' : i === relatedPath.hops.length - 1 ? 'vulnerable' : 'call') as string,
+          position: { x: i * 200, y: 0 },
+          data: {
+            label: `${h.functionName}()`,
+            file: h.filePath,
+            line: h.lineNumber,
+          },
+        }));
+        const edges = [];
+        for (let i = 0; i < nodes.length - 1; i++) {
+          edges.push({ id: `e-${i}`, source: nodes[i].id, target: nodes[i + 1].id, resolved: relatedPath.hops[i].callResolved });
+        }
+        setGraphData({ nodes, edges });
+      } else {
+        setGraphData({ nodes: [], edges: [] });
+      }
     }
   };
 
@@ -214,22 +348,41 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
     selectFinding(findings[nextIndex]);
   };
 
+  // Overlay pure reducer verdicts on findings
+  const effectiveFindings = useMemo(() => {
+    return findings.map((f) => {
+      const v = scanState.verdicts.get(f.vulnerability.id);
+      if (v) {
+        return {
+          ...f,
+          reachability: {
+            ...f.reachability,
+            verdict: (v.verdict as any) || f.reachability.verdict,
+            confidence_note: v.downgradeReason ? `⚠️ ${v.downgradeReason}` : (v.confidenceNote || f.reachability.confidence_note),
+            rationale: v.rationale || f.reachability.rationale,
+          },
+        };
+      }
+      return f;
+    });
+  }, [findings, scanState.verdicts]);
+
   // Clickable counts
   const counts = useMemo(() => {
     let confirmed = 0;
     let inconclusive = 0;
     let notObserved = 0;
-    findings.forEach((f) => {
+    effectiveFindings.forEach((f) => {
       if (f.reachability.verdict === 'reachable') confirmed++;
       else if (f.reachability.verdict === 'uncertain') inconclusive++;
       else notObserved++;
     });
     return { confirmed, inconclusive, notObserved };
-  }, [findings]);
+  }, [effectiveFindings]);
 
   // Filtered findings
   const filteredFindings = useMemo(() => {
-    return findings.filter((f) => {
+    return effectiveFindings.filter((f) => {
       // Query filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -540,10 +693,41 @@ ${selectedFinding.reachability.rationale}
     );
   }
 
-  const distinctPackagesCount = new Set(findings.map((f) => f.vulnerability.package_name)).size;
+  const distinctPackagesCount = new Set(effectiveFindings.map((f) => f.vulnerability.package_name)).size;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Binary stream & Pure Reducer status banner */}
+      {inspectorData && inspectorData.logLength > 0 && (
+        <div
+          style={{
+            padding: '8px 14px',
+            backgroundColor: 'rgba(30, 58, 138, 0.1)',
+            border: '1px solid var(--accent)',
+            borderRadius: 'var(--radius)',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Zap size={14} color="var(--accent)" />
+            <span>
+              <strong>Binary Stream &amp; Pure Reducer Active</strong> — Hydrated from IndexedDB append-only event log ({inspectorData.logLength} events, next seq #{inspectorData.nextSeq}, offset {inspectorData.lastOffset})
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--accent)' }}>
+              Hash: {inspectorData.stateHash}
+            </span>
+            <span style={{ fontSize: '11px', color: inspectorData.hashMatch ? 'var(--semantic-green)' : 'var(--semantic-red)' }}>
+              {inspectorData.hashMatch ? '✓ Verified' : '✗ Replay Mismatch'}
+            </span>
+          </div>
+        </div>
+      )}
       {/* Header bar: repo name, scan id, commit short SHA, time, summary line */}
       <div
         style={{

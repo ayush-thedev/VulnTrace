@@ -12,11 +12,21 @@ import { SettingsView } from './components/views/SettingsView';
 import { HomeView } from './components/views/HomeView';
 import { CommandPalette } from './components/common/CommandPalette';
 import { ShortcutSheet } from './components/common/ShortcutSheet';
+import { InspectorPanel } from './components/common/InspectorPanel';
+import { BinaryStreamProvider, useBinaryStream } from './context/BinaryStreamContext';
 import { useAppRouter } from './services/router';
 import { ToastProvider } from './components/shared/Toast';
 
 export const AppContent: React.FC = () => {
   const { route, navigate } = useAppRouter();
+  const {
+    inspectorData,
+    inspectorVisible,
+    setInspectorVisible,
+    replayFromZero,
+    chaosEnabled,
+    toggleChaos,
+  } = useBinaryStream();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false);
   const lastKeyRef = useRef<{ key: string; time: number } | null>(null);
@@ -213,6 +223,14 @@ export const AppContent: React.FC = () => {
           {renderActiveView()}
         </div>
         <LiveScanExecutionWidget onNavigateToScans={(scanId) => navigate(scanId ? `/scans/${scanId}` : '/scans')} />
+        <InspectorPanel
+          data={inspectorData}
+          visible={inspectorVisible}
+          onToggle={() => setInspectorVisible((v) => !v)}
+          onReplay={replayFromZero}
+          chaosEnabled={chaosEnabled}
+          onToggleChaos={toggleChaos}
+        />
       </main>
 
       {/* Global Command Palette (Cmd+K) */}
@@ -237,7 +255,9 @@ export const AppContent: React.FC = () => {
 export const App: React.FC = () => {
   return (
     <ToastProvider>
-      <AppContent />
+      <BinaryStreamProvider>
+        <AppContent />
+      </BinaryStreamProvider>
     </ToastProvider>
   );
 };

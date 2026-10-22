@@ -18,9 +18,20 @@ interface InspectorPanelProps {
   onReplay: () => void;
   visible: boolean;
   onToggle: () => void;
+  chaosEnabled?: boolean;
+  onToggleChaos?: () => void;
+  isSocketOwner?: boolean;
 }
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ data, onReplay, visible, onToggle }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({
+  data,
+  onReplay,
+  visible,
+  onToggle,
+  chaosEnabled,
+  onToggleChaos,
+  isSocketOwner,
+}) => {
   if (!visible) {
     return (
       <button
@@ -58,6 +69,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ data, onReplay, 
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>
         <Row label="Connection" value={data.connectionState} color={connColor} />
+        {isSocketOwner !== undefined && (
+          <Row label="Socket Lock" value={isSocketOwner ? 'Owner' : 'Follower'} color={isSocketOwner ? 'var(--semantic-green)' : 'var(--text-tertiary)'} />
+        )}
         <Row label="Log length" value={String(data.logLength)} />
         <Row label="Last offset" value={String(data.lastOffset)} />
         <Row label="Next seq" value={String(data.nextSeq)} />
@@ -85,17 +99,35 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ data, onReplay, 
         </div>
       </div>
 
-      <button
-        onClick={onReplay}
-        style={{
-          marginTop: '8px', width: '100%', padding: '6px',
-          background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          borderRadius: '4px', cursor: 'pointer', color: 'var(--text-primary)',
-          fontSize: '11px',
-        }}
-      >
-        ↻ Replay from offset 0
-      </button>
+      <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+        <button
+          onClick={onReplay}
+          style={{
+            flex: 1, padding: '6px',
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: '4px', cursor: 'pointer', color: 'var(--text-primary)',
+            fontSize: '11px',
+          }}
+        >
+          ↻ Replay offset 0
+        </button>
+        {onToggleChaos && (
+          <button
+            onClick={onToggleChaos}
+            style={{
+              padding: '6px 10px',
+              background: chaosEnabled ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg-surface)',
+              border: `1px solid ${chaosEnabled ? 'var(--semantic-red)' : 'var(--border)'}`,
+              borderRadius: '4px', cursor: 'pointer',
+              color: chaosEnabled ? 'var(--semantic-red)' : 'var(--text-secondary)',
+              fontSize: '11px',
+            }}
+            title="Toggle Chaos Simulation (loss, reorder, duplicate frames)"
+          >
+            {chaosEnabled ? '🎲 Chaos ON' : '🎲 Chaos OFF'}
+          </button>
+        )}
+      </div>
     </div>
   );
 };
